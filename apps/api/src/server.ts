@@ -54,12 +54,17 @@ const isMainModule = process.argv[1]
 if (isMainModule) {
   startServer()
     .then(({ url }) => {
+      const seedDemo = process.env.SEED_DEMO !== 'false';
       console.log(`\n  Facturación Electrónica EC · Plataforma multiempresa`);
       console.log(`  API + Web:        ${url}`);
       console.log(`  Plataforma:       ${config.platformDbPath}`);
       console.log(`  Empresas:         ${config.tenantsDir}/*.db`);
-      console.log(`  Superadmin:       superadmin / superadmin123`);
-      console.log(`  Empresa demo:     admin / admin123 (COMERCIAL DEMO S.A.)\n`);
+      console.log(`  Superadmin:       ${process.env.SUPERADMIN_USERNAME || 'superadmin'}`);
+      if (seedDemo) {
+        console.log(`  Empresa demo:     admin / admin123 (COMERCIAL DEMO S.A.)\n`);
+      } else {
+        console.log(`  Modo producción:  sin empresas demo; cree la primera licencia.\n`);
+      }
     })
     .catch((error) => {
       console.error('No se pudo iniciar el servidor:', error);

@@ -1,5 +1,24 @@
 # Despliegue profesional en Dokploy · Sistemas Sofi
 
+## 0. Estado actual del despliegue
+
+| Elemento | Valor |
+|---|---|
+| URL pública (verificada) | https://sistemas-sofi-hvrcwg-155996-157-180-30-98.sslip.io |
+| Proyecto Dokploy | **Sistemas Sofi** · `j45SUvi0jr3TfzjJlhdgS` |
+| Environment | `production` · `ch8ebRze-LLoL_xv2vGoM` |
+| Aplicación | **Sistemas Sofi** · `HGw18XbgYUYl5B0XdjSPz` · `sistemas-sofi-hvrcwg` |
+| Build | Dockerfile · rama `main` · auto-deploy en push |
+| Volúmenes | `sistemas-sofi-data` → `/app/data`, `sistemas-sofi-storage` → `/app/storage` |
+| Certificado | Let's Encrypt (válido, verificado por TLS) |
+| Estado | **En línea**: `/api/health` → 200, frontend 200, login superadmin 200 |
+
+**Acceso inicial:** usuario `superadmin`, contraseña definida en la variable
+`SUPERADMIN_PASSWORD` de Dokploy (cámbiela al primer ingreso). El despliegue arrancó con
+`SEED_DEMO=false`: no contiene empresas ni usuarios demo.
+
+**Pendientes:** dominio propio (DNS), backups programados y prueba de autorización con certificado real.
+
 ## 1. Resumen
 
 | Elemento | Valor |
