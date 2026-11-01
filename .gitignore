@@ -1,0 +1,24 @@
+# Dependencias
+node_modules/
+
+# Datos y secretos locales (nunca versionar)
+data/
+storage/
+logs/
+backups/
+.env
+.env.*
+!.env.example
+
+# Artefactos de ingeniería inversa / evidencia local
+re/
+docs/specs/
+docs/upconta-api/
+
+# Varios
+*.log
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+Thumbs.db

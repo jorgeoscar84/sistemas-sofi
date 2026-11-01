@@ -1,0 +1,12 @@
+{
+  "name": "@fe/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "node --watch src/server.ts",
+    "seed": "node src/seed.ts",
+    "test": "node --test test/core.test.ts"
+  }
+}

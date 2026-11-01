@@ -1,0 +1,16 @@
+.git
+.github
+data
+storage
+logs
+backups
+re
+docs
+node_modules
+.env
+.env.*
+*.log
+*.db
+*.db-wal
+*.db-shm
+apps/api/test

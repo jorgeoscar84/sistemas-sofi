@@ -1,0 +1,25 @@
+{
+  "name": "facturacion-ec",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Plataforma multiempresa de facturación electrónica para Ecuador (SRI): licencias, empresas aisladas, comprobantes, productos y servicios, Kardex e integración directa con el SRI. Stack sin dependencias: Node.js 24 nativo + frontend vanilla JS.",
+  "engines": {
+    "node": ">=23.6.0"
+  },
+  "scripts": {
+    "start": "node apps/api/src/server.ts",
+    "start:fondo": "node scripts/servidor-fondo.mjs",
+    "stop": "node scripts/detener-servidor.mjs",
+    "dev": "node --watch apps/api/src/server.ts",
+    "seed": "node apps/api/src/seed.ts",
+    "test": "node apps/api/test/core.test.ts",
+    "autodiagnostico": "node scripts/autodiagnostico.mjs",
+    "autodiagnostico:sri": "node scripts/autodiagnostico.mjs --sri",
+    "verify:signature": "node scripts/verificar-firma.mjs",
+    "verify:signature:sha256": "node scripts/verificar-firma.mjs --sha256",
+    "probar:emision": "node scripts/probar-emision-sri.mjs",
+    "backup": "node scripts/backup.mjs",
+    "reset-db": "node -e \"const fs=require('node:fs');for(const f of ['data/platform.db','data/platform.db-wal','data/platform.db-shm'])try{fs.rmSync(f)}catch{};try{fs.rmSync('data/tenants',{recursive:true,force:true})}catch{};console.log('bases de datos eliminadas')\""
+  }
+}
