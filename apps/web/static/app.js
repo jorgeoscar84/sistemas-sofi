@@ -8,13 +8,18 @@ import {
   apiGet,
   apiPost,
   clearSession,
+  closeModal,
   esc,
+  field,
   getTenantId,
   getToken,
   getUser,
+  modal,
+  readForm,
   setTenantId,
   setToken,
   setUser,
+  toast,
   toastError,
 } from './lib.js';
 
@@ -162,8 +167,9 @@ function renderLogin(message = '') {
             <button class="btn primary block lg" type="submit">Iniciar sesión</button>
           </form>
           <div class="hint">
-            Superadministrador: <b>superadmin / superadmin123</b><br />
-            Empresa demo: <b>admin / admin123</b> · <b>facturador / facturador123</b> · <b>inventario / inventario123</b>
+            Acceso inicial de la plataforma: usuario <b>superadmin</b>.<br />
+            La contraseña inicial la define el administrador del sistema (variable
+            <span class="mono">SUPERADMIN_PASSWORD</span>). Cámbiela después del primer ingreso.
           </div>
         </div>
       </section>
@@ -296,6 +302,7 @@ function renderLayout() {
             <div class="avatar">${esc(initials)}</div>
             <div class="user-meta"><div class="name">${esc(user.name)}</div><div class="role">${esc(user.roleLabel || user.role)}</div></div>
             <div class="user-drop" id="user-drop">
+              <button class="btn ghost block" id="change-password-btn">Cambiar contraseña</button>
               <button class="btn ghost block" id="logout-btn">Cerrar sesión</button>
             </div>
           </div>
@@ -313,8 +320,13 @@ function renderLayout() {
     });
   }
   document.querySelector('.user-menu').addEventListener('click', (event) => {
-    if (event.target.closest('#logout-btn')) return;
+    if (event.target.closest('#logout-btn') || event.target.closest('#change-password-btn')) return;
     document.getElementById('user-drop').classList.toggle('open');
+  });
+  document.getElementById('change-password-btn').addEventListener('click', (event) => {
+    event.stopPropagation();
+    document.getElementById('user-drop').classList.remove('open');
+    openChangePassword();
   });
   document.getElementById('logout-btn').addEventListener('click', () => {
     clearSession();
@@ -322,6 +334,44 @@ function renderLayout() {
     setTenantId('');
     location.hash = '#/login';
     renderLogin();
+  });
+}
+
+/** Modal para que cualquier usuario cambie su propia contraseña. */
+function openChangePassword() {
+  modal({
+    title: 'Cambiar contraseña',
+    size: 'sm',
+    body: `
+      <form id="change-password-form">
+        ${field('Contraseña actual', '<input name="currentPassword" type="password" autocomplete="current-password" required />')}
+        ${field('Nueva contraseña', '<input name="newPassword" type="password" autocomplete="new-password" minlength="6" required />', { help: 'Mínimo 6 caracteres' })}
+        ${field('Confirmar nueva contraseña', '<input name="confirmPassword" type="password" autocomplete="new-password" minlength="6" required />')}
+      </form>`,
+    actions: [
+      { label: 'Cancelar', className: 'ghost', onClick: () => closeModal() },
+      {
+        label: 'Guardar contraseña',
+        className: 'primary',
+        onClick: async () => {
+          const values = readForm(document.getElementById('change-password-form'));
+          if (!values.newPassword || values.newPassword !== values.confirmPassword) {
+            toast('Las contraseñas nuevas no coinciden', 'warn');
+            return;
+          }
+          try {
+            await apiPost('/auth/change-password', {
+              currentPassword: values.currentPassword,
+              newPassword: values.newPassword,
+            });
+            closeModal();
+            toast('Contraseña actualizada correctamente');
+          } catch (error) {
+            toastError(error);
+          }
+        },
+      },
+    ],
   });
 }
 
