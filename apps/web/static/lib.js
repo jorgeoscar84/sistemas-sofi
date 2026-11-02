@@ -287,6 +287,10 @@ export function modal({ title = '', body = '', size = '', actions = [] }) {
   backdrop.addEventListener('click', (event) => {
     if (event.target === backdrop || event.target.hasAttribute('data-close')) closeModal();
   });
+  // Evita que presionar Enter en un campo recargue la página y pierda el formulario.
+  modalEl.querySelectorAll('form').forEach((form) => {
+    form.addEventListener('submit', (event) => event.preventDefault());
+  });
   document.getElementById('modal-root').appendChild(backdrop);
   activeModal = backdrop;
   return modalEl;
