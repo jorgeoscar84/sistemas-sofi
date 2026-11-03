@@ -253,6 +253,44 @@ function ivaTarifaPercent(code: string): number {
   return Math.round(ivaRate(code) * 100);
 }
 
+/**
+ * El SRI exige el código de 2 dígitos de la tabla de formas de pago, no el
+ * nombre. La interfaz envía etiquetas amigables ("efectivo", "transferencia");
+ * aquí se traducen antes de construir el XML.
+ */
+const SRI_PAYMENT_CODES: Record<string, string> = {
+  efectivo: '01',
+  cheque: '02',
+  letra: '03',
+  'letra de cambio': '03',
+  'tarjeta de credito': '04',
+  'tarjeta de crédito': '04',
+  'tarjeta credito': '04',
+  'tarjeta de debito': '05',
+  'tarjeta de débito': '05',
+  'tarjeta debito': '05',
+  'dinero electronico': '06',
+  'dinero electrónico': '06',
+  'tarjeta prepago': '07',
+  transferencia: '08',
+  'transferencia bancaria': '08',
+  compensacion: '09',
+  'compensación de deudas': '09',
+  'tarjeta regalo': '10',
+  'cheque certificado': '11',
+  'cheque de gerencia': '12',
+  'cheque de viajero': '14',
+  'carta de credito': '15',
+  'carta de crédito': '15',
+  otros: '20',
+};
+
+function sriPaymentCode(method: string): string {
+  const text = String(method ?? '').trim();
+  if (/^(0[1-9]|1[0-9]|2[0-1])$/.test(text)) return text;
+  return SRI_PAYMENT_CODES[text.toLowerCase()] ?? '01';
+}
+
 /* ------------------------------------------------------------- numeración */
 
 function reserveSequential(emissionPointId: string, docType: string, dateIso: string) {
@@ -607,7 +645,7 @@ function buildXmlForVoucher(row: VoucherRow, items: VoucherItemRow[], payments: 
   }));
   const infoAdicional = parseJson<{ nombre: string; valor: string }[]>(row.info_adicional, []);
   const pagos = payments.map((payment) => ({
-    formaPago: payment.method,
+    formaPago: sriPaymentCode(payment.method),
     total: payment.amount_cents / 100,
     plazo: payment.term || undefined,
   }));
