@@ -473,7 +473,7 @@ try {
       organization: 'EMPRESA AUTODIAGNÓSTICO S.A.',
       country: 'EC',
     });
-    const p12 = sri.buildAesTestP12(generated.certificatePem, generated.privateKeyPem, 'autotest123');
+    const p12 = sri.buildBerTestP12(generated.certificatePem, generated.privateKeyPem, 'autotest123');
     const uploaded = await expectOk('POST', '/api/company/certificate', {
       body: { p12Base64: p12.toString('base64'), password: 'autotest123' },
       token: tenantToken,
@@ -619,5 +619,6 @@ try {
     console.log(`Datos temporales conservados en ${tmpDir}`);
   }
 }
+
 
 

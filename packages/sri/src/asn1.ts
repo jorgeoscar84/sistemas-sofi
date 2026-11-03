@@ -10,16 +10,20 @@ export interface Asn1Node {
   /** Contenido del TLV (para construidos, la concatenación de hijos). */
   content: Buffer;
   children: Asn1Node[];
+  /** true cuando el TLV usó longitud indefinida (BER, terminada en 00 00). */
+  indefinite?: boolean;
 }
 
 const TAG_SEQUENCE = 0x30;
 const TAG_SET = 0x31;
 
-function readLength(buffer: Buffer, offset: number): { length: number; next: number } {
+function readLength(buffer: Buffer, offset: number): { length: number | null; next: number } {
   const first = buffer[offset]!;
   if (first < 0x80) return { length: first, next: offset + 1 };
   const count = first & 0x7f;
-  if (count === 0 || count > 4) throw new Error('Longitud ASN.1 no soportada');
+  // 0x80 = longitud indefinida (BER): el contenido termina con 00 00.
+  if (count === 0) return { length: null, next: offset + 1 };
+  if (count > 6) throw new Error('Longitud ASN.1 demasiado grande');
   let length = 0;
   for (let i = 0; i < count; i++) length = length * 256 + buffer[offset + 1 + i]!;
   return { length, next: offset + 1 + count };
@@ -51,6 +55,26 @@ function parseAt(buffer: Buffer, offset: number): [Asn1Node, number] {
   if ((tag & 0x1f) === 0x1f) throw new Error('Etiquetas ASN.1 multibyte no soportadas');
   const constructed = (tag & 0x20) !== 0;
   const { length, next } = readLength(buffer, offset + 1);
+
+  if (length === null) {
+    if (!constructed) throw new Error('Longitud indefinida ASN.1 en un elemento primitivo');
+    const contentStart = next;
+    let childOffset = contentStart;
+    const children: Asn1Node[] = [];
+    for (;;) {
+      if (childOffset + 2 > buffer.length) throw new Error('ASN.1 truncado: falta el fin de contenido 00 00');
+      if (buffer[childOffset] === 0 && buffer[childOffset + 1] === 0) {
+        childOffset += 2;
+        break;
+      }
+      const [child, childNext] = parseAt(buffer, childOffset);
+      children.push(child);
+      childOffset = childNext;
+    }
+    const content = buffer.subarray(contentStart, childOffset - 2);
+    return [{ tag, constructed, content, children, indefinite: true }, childOffset];
+  }
+
   const start = next;
   const end = start + length;
   if (end > buffer.length) throw new Error('Contenido ASN.1 truncado');
@@ -108,8 +132,13 @@ export function asOid(node: Asn1Node): string {
 }
 
 export function asOctetString(node: Asn1Node): Buffer {
-  if (node.tag !== 0x04) throw new Error(`Se esperaba OCTET STRING, llegó 0x${node.tag.toString(16)}`);
-  return node.content;
+  // OCTET STRING primitivo (04) o construido (24, habitual en BER): en el
+  // segundo caso los segmentos se concatenan, como exige BER/X.690.
+  if (!node.constructed && node.tag === 0x04) return node.content;
+  if (node.constructed && (node.tag === 0x04 || node.tag === 0x24)) {
+    return Buffer.concat(node.children.map((child) => asOctetString(child)));
+  }
+  throw new Error(`Se esperaba OCTET STRING, llegó 0x${node.tag.toString(16)}`);
 }
 
 export function asBmpString(node: Asn1Node): string {
@@ -221,7 +250,8 @@ export function bmpPassword(password: string): Buffer {
   return Buffer.from(`${password}\u0000`, 'utf16le').swap16();
 }
 
-/** Serializa de nuevo un nodo analizado a DER (etiqueta + longitud + contenido). */
+/** Serializa de nuevo un nodo analizado a DER (normaliza longitudes BER indefinidas). */
 export function toDer(node: Asn1Node): Buffer {
-  return tlv(node.tag, node.content);
+  if (!node.constructed) return tlv(node.tag, node.content);
+  return tlv(node.tag, Buffer.concat(node.children.map((child) => toDer(child))));
 }
