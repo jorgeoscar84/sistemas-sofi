@@ -330,13 +330,20 @@ export function registerCompanyRoutes(router: Router): void {
       if (!p12Base64) {
         throw ApiError.badRequest('Envíe el certificado y la clave en PEM, o un archivo PKCS#12 (.p12) en base64 con su contraseña');
       }
+      const p12Buffer = Buffer.from(p12Base64, 'base64');
+      if (p12Buffer.length < 64) {
+        throw ApiError.badRequest(
+          `El archivo PKCS#12 parece incompleto o vacío (${p12Buffer.length} bytes recibidos). Vuelva a descargarlo/exportarlo.`,
+        );
+      }
       let parsed;
       try {
-        parsed = parseP12(Buffer.from(p12Base64, 'base64'), password);
+        parsed = parseP12(p12Buffer, password);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw ApiError.badRequest(
-          `No se pudo leer el archivo PKCS#12. Verifique que el archivo no esté dañado y que la contraseña sea correcta. ` +
+          `No se pudo leer el archivo PKCS#12 (${p12Buffer.length} bytes recibidos). ` +
+            `Verifique que el archivo no esté dañado y que la contraseña sea correcta. ` +
             `Detalle técnico: ${detail}. Si persiste, exporte el certificado y la clave a PEM (BEGIN CERTIFICATE / BEGIN PRIVATE KEY) y cárguelos manualmente.`,
         );
       }
@@ -389,6 +396,7 @@ export function registerCompanyRoutes(router: Router): void {
 }
 
 export { camel };
+
 
 
 

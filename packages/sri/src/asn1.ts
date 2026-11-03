@@ -23,7 +23,7 @@ function readLength(buffer: Buffer, offset: number): { length: number | null; ne
   const count = first & 0x7f;
   // 0x80 = longitud indefinida (BER): el contenido termina con 00 00.
   if (count === 0) return { length: null, next: offset + 1 };
-  if (count > 6) throw new Error('Longitud ASN.1 demasiado grande');
+  if (count > 6) throw new Error(`Longitud ASN.1 no soportada en offset ${offset} (${count} bytes de longitud)`);
   let length = 0;
   for (let i = 0; i < count; i++) length = length * 256 + buffer[offset + 1 + i]!;
   return { length, next: offset + 1 + count };
@@ -62,7 +62,9 @@ function parseAt(buffer: Buffer, offset: number): [Asn1Node, number] {
     let childOffset = contentStart;
     const children: Asn1Node[] = [];
     for (;;) {
-      if (childOffset + 2 > buffer.length) throw new Error('ASN.1 truncado: falta el fin de contenido 00 00');
+      if (childOffset + 2 > buffer.length) {
+        throw new Error(`ASN.1 truncado en offset ${offset}: falta el fin de contenido 00 00`);
+      }
       if (buffer[childOffset] === 0 && buffer[childOffset + 1] === 0) {
         childOffset += 2;
         break;
@@ -77,7 +79,11 @@ function parseAt(buffer: Buffer, offset: number): [Asn1Node, number] {
 
   const start = next;
   const end = start + length;
-  if (end > buffer.length) throw new Error('Contenido ASN.1 truncado');
+  if (end > buffer.length) {
+    throw new Error(
+      `Contenido ASN.1 truncado en offset ${offset}: etiqueta 0x${tag.toString(16)}, longitud ${length}, disponibles ${buffer.length - start}`,
+    );
+  }
   const content = buffer.subarray(start, end);
   let children: Asn1Node[] = [];
   if (constructed) {
@@ -255,3 +261,4 @@ export function toDer(node: Asn1Node): Buffer {
   if (!node.constructed) return tlv(node.tag, node.content);
   return tlv(node.tag, Buffer.concat(node.children.map((child) => toDer(child))));
 }
+

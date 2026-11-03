@@ -150,6 +150,15 @@ function encrypt3des(plain: Buffer, password: string): Buffer {
  * Construye un PKCS#12 de prueba: certificado en claro y clave privada protegida
  * con PBE SHA-1/3DES (la variante habitual de los .p12 ecuatorianos).
  */
+function buildMacData(authenticatedSafe: Buffer, password: string): Buffer {
+  const salt = crypto.randomBytes(16);
+  const iterations = 2048;
+  const key = derivePkcs12Key(password, salt, iterations, 3, 32);
+  const mac = crypto.createHmac('sha256', key).update(authenticatedSafe).digest();
+  const digestInfo = seq(seq(oid('2.16.840.1.101.3.4.2.1'), nullValue()), octetString(mac));
+  return seq(digestInfo, octetString(salt), integer(iterations));
+}
+
 export function buildTestP12(certificatePem: string, privateKeyPem: string, password: string): Buffer {
   const certificateDer = pemToDer(certificatePem);
   const privateKeyDer = pemToDer(privateKeyPem);
@@ -159,7 +168,7 @@ export function buildTestP12(certificatePem: string, privateKeyPem: string, pass
 
   const authenticatedSafe = seq(contentTypeData(certContents), encrypt3des(keyContents, password));
   const authSafe = contentTypeData(authenticatedSafe);
-  const pfx = seq(integer(3), authSafe);
+  const pfx = seq(integer(3), authSafe, buildMacData(authenticatedSafe, password));
   return pfx;
 }
 
@@ -225,19 +234,26 @@ const OID_PBKDF2 = '1.2.840.113549.1.5.12';
 const OID_HMAC_SHA256 = '1.2.840.113549.2.9';
 const OID_AES_256_CBC = '2.16.840.1.101.3.4.1.42';
 
-function encryptAes256Pbes2(plain: Buffer, password: string): Buffer {
+function encryptAes256Pbes2(
+  plain: Buffer,
+  password: string,
+  options: { digest?: 'sha256' | 'sha512'; includeKeyLength?: boolean } = {},
+): Buffer {
+  const digest = options.digest ?? 'sha256';
+  const includeKeyLength = options.includeKeyLength !== false;
+  const prfOid = digest === 'sha512' ? '1.2.840.113549.2.11' : '1.2.840.113549.2.9';
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(16);
   const iterations = 10_000;
   const keyLength = 32;
-  const key = crypto.pbkdf2Sync(Buffer.from(password, 'utf8'), salt, iterations, keyLength, 'sha256');
+  const key = crypto.pbkdf2Sync(Buffer.from(password, 'utf8'), salt, iterations, keyLength, digest);
   const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
   const encrypted = Buffer.concat([cipher.update(plain), cipher.final()]);
   const pbkdf2Params = seq(
     octetString(salt),
     integer(iterations),
-    integer(keyLength),
-    seq(oid(OID_HMAC_SHA256), nullValue()),
+    ...(includeKeyLength ? [integer(keyLength)] : []),
+    seq(oid(prfOid), nullValue()),
   );
   const pbes2Params = seq(
     seq(oid(OID_PBKDF2), pbkdf2Params),
@@ -265,6 +281,19 @@ export function buildAesTestP12(certificatePem: string, privateKeyPem: string, p
   return seq(integer(3), contentTypeData(authenticatedSafe));
 }
 
+/** Variante PBES2 con PBKDF2-HMAC-SHA512 y sin keyLength (como algunos emisores). */
+export function buildAes512TestP12(certificatePem: string, privateKeyPem: string, password: string): Buffer {
+  const certificateDer = pemToDer(certificatePem);
+  const privateKeyDer = pemToDer(privateKeyPem);
+  const certContents = seq(certBag(certificateDer));
+  const keyContents = seq(safeBag(OID_KEY_BAG, privateKeyDer));
+  const authenticatedSafe = seq(
+    contentTypeData(certContents),
+    encryptAes256Pbes2(keyContents, password, { digest: 'sha512', includeKeyLength: false }),
+  );
+  return seq(integer(3), contentTypeData(authenticatedSafe));
+}
+
 /* ---------------------------------------- PKCS#12 codificado en BER (indefinido) */
 
 function berEncode(node: Asn1Node): Buffer {
@@ -280,4 +309,6 @@ function berEncode(node: Asn1Node): Buffer {
 export function buildBerTestP12(certificatePem: string, privateKeyPem: string, password: string): Buffer {
   return berEncode(parseDer(buildTestP12(certificatePem, privateKeyPem, password)));
 }
+
+
 
