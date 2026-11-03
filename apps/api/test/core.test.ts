@@ -28,6 +28,7 @@ const { buildClaveAcceso, parseClaveAcceso, modulo11, validateIdentificacion } =
 );
 const {
   buildFacturaXml,
+  buildAes512TestP12,
   buildAesTestP12,
   buildBerTestP12,
   buildLegacyTestP12,
@@ -464,6 +465,7 @@ test('genera certificado de prueba, lo empaqueta en PKCS#12 y firma XML', async 
     country: 'EC',
   });
   const p12 = buildTestP12(certificatePem, privateKeyPem, 'clave123');
+  assert.throws(() => parseP12(p12, 'clave-incorrecta'), /MAC|Contraseña incorrecta/i);
   const parsed = parseP12(p12, 'clave123');
   assert.match(parsed.certificatePem, /BEGIN CERTIFICATE/);
   assert.match(parsed.privateKeyPem, /BEGIN PRIVATE KEY/);
@@ -474,6 +476,11 @@ test('genera certificado de prueba, lo empaqueta en PKCS#12 y firma XML', async 
   const aesParsed = parseP12(aesP12, 'clave123');
   assert.ok(aesParsed.subject?.includes('PRUEBA TEST'));
   assert.match(aesParsed.privateKeyPem, /BEGIN PRIVATE KEY/);
+
+  // PBES2 con PBKDF2-HMAC-SHA512 y sin keyLength (detección de PRF por etiqueta)
+  const aes512 = buildAes512TestP12(certificatePem, privateKeyPem, 'clave123');
+  const aes512Parsed = parseP12(aes512, 'clave123');
+  assert.ok(aes512Parsed.subject?.includes('PRUEBA TEST'));
 
   // PKCS#12 en BER con longitudes indefinidas (certificados de algunas entidades)
   const berP12 = buildBerTestP12(certificatePem, privateKeyPem, 'clave123');
@@ -783,5 +790,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
+
 
 

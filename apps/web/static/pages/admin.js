@@ -199,7 +199,7 @@ async function renderCompany(root) {
           </dl>`
         : ''}
       <div class="form-grid">
-        ${field('Archivo PKCS#12', '<input type="file" id="cert-file" accept=".p12,.pfx,application/x-pkcs12" />')}
+        ${field('Archivo PKCS#12', '<input type="file" id="cert-file" accept=".p12,.pfx,application/x-pkcs12" /><div id="cert-file-info" class="help"></div>')}
         ${field('Contraseña del certificado', '<input type="password" id="cert-password" autocomplete="off" />')}
       </div>
       <div class="mt-16 inline">
@@ -380,6 +380,13 @@ async function renderCompany(root) {
         },
       ],
     });
+  });
+
+  const certFileInput = document.getElementById('cert-file');
+  certFileInput?.addEventListener('change', () => {
+    const file = certFileInput.files?.[0];
+    const info = document.getElementById('cert-file-info');
+    if (info) info.textContent = file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : '';
   });
 
   document.getElementById('upload-p12').addEventListener('click', async () => {
@@ -637,3 +644,4 @@ async function renderIntegration(root) {
     });
   });
 }
+

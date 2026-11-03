@@ -28,8 +28,10 @@ const OID_PBE_RC2_40 = '1.2.840.113549.1.12.1.6';
 const OID_PBES2 = '1.2.840.113549.1.5.13';
 const OID_PBKDF2 = '1.2.840.113549.1.5.12';
 const OID_HMAC_SHA1 = '1.2.840.113549.2.7';
+const OID_HMAC_SHA224 = '1.2.840.113549.2.8';
 const OID_HMAC_SHA256 = '1.2.840.113549.2.9';
-const OID_HMAC_SHA512 = '1.2.840.113549.2.10';
+const OID_HMAC_SHA384 = '1.2.840.113549.2.10';
+const OID_HMAC_SHA512 = '1.2.840.113549.2.11';
 const OID_DES_EDE3 = '1.2.840.113549.3.7';
 const OID_AES_128 = '2.16.840.1.101.3.4.1.2';
 const OID_AES_192 = '2.16.840.1.101.3.4.1.22';
@@ -53,7 +55,7 @@ export function derivePkcs12Key(
   password: string,
   salt: Buffer,
   iterations: number,
-  id: 1 | 2,
+  id: 1 | 2 | 3,
   size: number,
 ): Buffer {
   const u = 20; // SHA-1
@@ -97,6 +99,40 @@ export function derivePkcs12Key(
     I = next;
   }
   return Buffer.concat(result).subarray(0, size);
+}
+
+/* ---------------------------------------------------------------- MAC */
+
+const DIGEST_OIDS: Record<string, { digest: string; size: number }> = {
+  '1.3.14.3.2.26': { digest: 'sha1', size: 20 },
+  '2.16.840.1.101.3.4.2.4': { digest: 'sha224', size: 28 },
+  '2.16.840.1.101.3.4.2.1': { digest: 'sha256', size: 32 },
+  '2.16.840.1.101.3.4.2.2': { digest: 'sha384', size: 48 },
+  '2.16.840.1.101.3.4.2.3': { digest: 'sha512', size: 64 },
+};
+
+/**
+ * Verifica la MAC del PKCS#12 antes de descifrar. Si la contraseña es incorrecta
+ * (o el archivo está dañado), la MAC no coincide y se devuelve un error claro en
+ * lugar de un confuso error ASN.1 al interpretar el contenido descifrado.
+ */
+function verifyMac(macData: Asn1Node, authSafeBytes: Buffer, password: string): void {
+  const parts = asSequence(macData);
+  const digestInfo = asSequence(parts[0]!);
+  const algorithm = readAlgorithm(digestInfo[0]!);
+  const expected = asOctetString(digestInfo[1]!);
+  const salt = asOctetString(parts[1]!);
+  const iterations = parts[2] ? Number(asInteger(parts[2])) : 1;
+  const entry = DIGEST_OIDS[algorithm.oid];
+  if (!entry) throw new Error(`Algoritmo de MAC PKCS#12 no soportado: ${algorithm.oid}`);
+  const key = derivePkcs12Key(password, salt, iterations, 3, entry.size);
+  const actual = crypto.createHmac(entry.digest, key).update(authSafeBytes).digest();
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
+    throw new Error(
+      'Contraseña incorrecta o archivo PKCS#12 dañado: la MAC de integridad no coincide. ' +
+        'Verifique la contraseña exacta del certificado y que el archivo no esté alterado.',
+    );
+  }
 }
 
 /* ---------------------------------------------------------------- descifrado */
@@ -149,16 +185,35 @@ function decryptData(algorithm: AlgorithmIdentifier, data: Buffer, password: str
     const kdfParts = asSequence(kdf.params!);
     const saltNode = kdfParts[0]!;
     let salt: Buffer;
-    if (saltNode.tag === 0x04) salt = asOctetString(saltNode);
-    else {
-      // AlgorithmIdentifier con prf específico: se toma el OCTET STRING interno
-      const inner = children(saltNode).find((child) => child.tag === 0x04);
+    if (saltNode.tag === 0x04 || saltNode.tag === 0x24) {
+      salt = asOctetString(saltNode);
+    } else {
+      // Algunos emisores envuelven la sal en un AlgorithmIdentifier.
+      const inner = children(saltNode).find((child) => child.tag === 0x04 || child.tag === 0x24);
       if (!inner) throw new Error('Sal PBKDF2 no reconocida');
       salt = asOctetString(inner);
     }
     const iterations = Number(asInteger(kdfParts[1]!));
-    const prfOid = kdfParts[3] ? readAlgorithm(kdfParts[3]).oid : OID_HMAC_SHA1;
-    const digest = prfOid === OID_HMAC_SHA256 ? 'sha256' : prfOid === OID_HMAC_SHA512 ? 'sha512' : 'sha1';
+    // PBKDF2 params: salt, iterations, [keyLength], [prf]. Si keyLength se omite,
+    // el PRF puede venir en la posición 2; hay que detectarlo por su etiqueta SEQUENCE.
+    let prfNode: Asn1Node | undefined;
+    for (const candidate of kdfParts.slice(2)) {
+      if (candidate.tag === 0x30) {
+        prfNode = candidate;
+        break;
+      }
+    }
+    const prfOid = prfNode ? readAlgorithm(prfNode).oid : OID_HMAC_SHA1;
+    const digest =
+      prfOid === OID_HMAC_SHA224
+        ? 'sha224'
+        : prfOid === OID_HMAC_SHA256
+          ? 'sha256'
+          : prfOid === OID_HMAC_SHA384
+            ? 'sha384'
+            : prfOid === OID_HMAC_SHA512
+              ? 'sha512'
+              : 'sha1';
     const scheme = readAlgorithm(schemeNode!);
     // PKCS#5 v2 define los parámetros de AES-CBC como OCTET STRING (IV) directo;
     // algunos emisores los envuelven en SEQUENCE, por eso se aceptan ambas formas.
@@ -288,6 +343,9 @@ export function parseP12(p12: Buffer, password: string): P12Contents {
   const contentType = asOid(authParts[0]!);
   if (contentType !== OID_DATA) throw new Error(`ContentInfo PKCS#12 no soportado: ${contentType}`);
   const authenticatedSafe = asOctetString(explicitChild(authParts[1]!));
+  // La MAC cubre el contenido del authSafe (AuthenticatedSafe) y detecta
+  // contraseñas incorrectas o archivos truncados antes de intentar descifrar.
+  if (parts[2]) verifyMac(parts[2], authenticatedSafe, password);
   const bags = collectBags(authenticatedSafe, password);
 
   const certificates: Buffer[] = [];
