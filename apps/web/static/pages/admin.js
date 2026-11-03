@@ -200,13 +200,14 @@ async function renderCompany(root) {
         : ''}
       <div class="form-grid">
         ${field('Archivo PKCS#12', '<input type="file" id="cert-file" accept=".p12,.pfx,application/x-pkcs12" /><div id="cert-file-info" class="help"></div>')}
-        ${field('Contraseña del certificado', '<input type="password" id="cert-password" autocomplete="off" />')}
+        ${field('Contraseña del certificado', '<input type="password" id="cert-password" autocomplete="off" /><label class="check small mt-8" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="cert-show" /> Mostrar contraseña</label>')}
       </div>
       <div class="mt-16 inline">
         <button class="btn primary" id="upload-p12">Cargar certificado .p12</button>
         <button class="btn" id="check-cert">Verificar estado</button>
         <button class="btn" id="test-sri">Probar conexión con el SRI</button>
       </div>
+      <div id="cert-error" class="small mt-8" style="color:var(--red);white-space:pre-wrap"></div>
       <details class="mt-16">
         <summary class="small muted" style="cursor:pointer">Cargar manualmente en formato PEM</summary>
         <div class="grid cols-2 mt-16">
@@ -387,12 +388,20 @@ async function renderCompany(root) {
     const file = certFileInput.files?.[0];
     const info = document.getElementById('cert-file-info');
     if (info) info.textContent = file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB` : '';
+    const errorBox = document.getElementById('cert-error');
+    if (errorBox) errorBox.textContent = '';
+  });
+  document.getElementById('cert-show')?.addEventListener('change', (event) => {
+    const passwordInput = document.getElementById('cert-password');
+    if (passwordInput) passwordInput.type = event.target.checked ? 'text' : 'password';
   });
 
   document.getElementById('upload-p12').addEventListener('click', async () => {
     const fileInput = document.getElementById('cert-file');
     const password = document.getElementById('cert-password').value;
     const file = fileInput.files?.[0];
+    const errorBox = document.getElementById('cert-error');
+    if (errorBox) errorBox.textContent = '';
     if (!file) {
       toast('Seleccione el archivo .p12/.pfx', 'warn');
       return;
@@ -406,9 +415,11 @@ async function renderCompany(root) {
       });
       const result = await apiPost('/company/certificate', { p12Base64: base64, password });
       toast(`Certificado cargado: ${result.certificate.subject.replace(/\n/g, ' · ')}`);
+      if (errorBox) errorBox.textContent = '';
       await renderCompany(root);
     } catch (error) {
       toastError(error);
+      if (errorBox) errorBox.textContent = error.message;
     }
   });
 
