@@ -389,12 +389,37 @@ export function debounce(fn, delay = 300) {
   };
 }
 
+/** Copia texto al portapapeles con respaldo para navegadores que bloquean la API. */
 export async function copyText(text) {
+  let copied = false;
   try {
-    await navigator.clipboard.writeText(text);
-    toast('Copiado al portapapeles');
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    }
   } catch {
-    toast('No se pudo copiar', 'warn');
+    copied = false;
+  }
+  if (!copied && typeof document.execCommand === 'function') {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.top = '-1000px';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    try {
+      copied = document.execCommand('copy');
+    } catch {
+      copied = false;
+    }
+    area.remove();
+  }
+  if (copied) {
+    toast('Copiado al portapapeles');
+  } else {
+    toast('El navegador bloqueó el portapapeles. Descargue el archivo o seleccione el texto manualmente.', 'warn');
   }
 }
 

@@ -204,7 +204,10 @@ function openCreateCompany(root, ctx) {
                     Usuario: <b>${esc(result.admin.username)}</b><br />
                     Contraseña: <b>${esc(result.admin.password)}</b>
                   </p>
-                  <button class="btn sm" id="copy-creds">Copiar credenciales</button>
+                  <div class="inline" style="flex-wrap:wrap">
+                    <button class="btn sm" id="copy-creds">Copiar credenciales</button>
+                    <button class="btn sm" id="download-creds">Descargar credenciales (.txt)</button>
+                  </div>
                 </div>
                 <p class="muted small">Puede entrar a configurarla ahora mismo (empresa, certificado, SRI) o dejarla lista para que el cliente la configure.</p>`,
               actions: [
@@ -224,6 +227,28 @@ function openCreateCompany(root, ctx) {
             document.getElementById('copy-creds')?.addEventListener('click', () =>
               copyText(`Usuario: ${result.admin.username}\nContraseña: ${result.admin.password}\nRUC: ${result.company.ruc}`),
             );
+            document.getElementById('download-creds')?.addEventListener('click', () => {
+              const content =
+                `Sistemas Sofi — Credenciales de acceso\n` +
+                `=====================================\n\n` +
+                `Empresa: ${result.company.name}\n` +
+                `RUC: ${result.company.ruc}\n` +
+                `Licencia: ${result.company.statusLabel} (plan ${result.company.plan})\n\n` +
+                `Usuario administrador: ${result.admin.username}\n` +
+                `Contraseña: ${result.admin.password}\n\n` +
+                `Ingrese en: ${location.origin}\n` +
+                `Cambie la contraseña después del primer ingreso.\n`;
+              const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+              const url = URL.createObjectURL(blob);
+              const anchor = document.createElement('a');
+              anchor.href = url;
+              anchor.download = `credenciales-${result.company.ruc}.txt`;
+              document.body.appendChild(anchor);
+              anchor.click();
+              anchor.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 4000);
+              toast('Credenciales descargadas');
+            });
             void root;
             void ctx;
           } catch (error) {
