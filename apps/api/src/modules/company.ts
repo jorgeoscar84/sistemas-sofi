@@ -155,6 +155,15 @@ export function registerCompanyRoutes(router: Router): void {
     const newAddress = body.address !== undefined ? str(body.address, 'address') || null : row.address;
     const newEmail = body.email !== undefined ? str(body.email, 'email') || null : row.email;
     const newPhone = body.phone !== undefined ? str(body.phone, 'phone') || null : row.phone;
+    if (body.rimpe !== undefined) {
+      const rimpeValue = str(body.rimpe, 'rimpe') || '';
+      const allowedRimpe = ['CONTRIBUYENTE RÉGIMEN RIMPE', 'CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE'];
+      if (rimpeValue && !allowedRimpe.includes(rimpeValue)) {
+        throw ApiError.badRequest(
+          'Régimen RIMPE inválido. El SRI solo acepta "CONTRIBUYENTE RÉGIMEN RIMPE" o "CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE".',
+        );
+      }
+    }
     // El RUC identifica a la empresa/licencia en la plataforma: validarlo antes de guardar
     // para no exponer nunca un error de restricción SQL.
     const rucOwner = pOne<{ id: string }>('SELECT id FROM platform_companies WHERE ruc = ?', [newRuc]);
