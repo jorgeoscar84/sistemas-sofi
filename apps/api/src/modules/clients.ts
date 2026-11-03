@@ -1,6 +1,20 @@
 /** Clientes (receptores de comprobantes). */
 
-import { validateIdentificacion, CONSUMIDOR_FINAL } from '../../../../packages/shared/src/index.ts';
+import { CONSUMIDOR_FINAL, validateIdentificacion } from '../../../../packages/shared/src/index.ts';
+
+/**
+ * El SRI acepta comprobantes con RUC de receptor que no superan el dígito
+ * verificador local (hay RUC históricos/legacy válidos para la autoridad).
+ * Para clientes se valida estructura y provincia; el emisor sigue con la
+ * validación estricta al configurar la empresa.
+ */
+function validClientIdentification(idType: string, idNumber: string): boolean {
+  if (idType === '04' && /^\d{13}$/.test(idNumber)) {
+    const province = Number(idNumber.slice(0, 2));
+    return province >= 1 && province <= 24;
+  }
+  return validateIdentificacion(idType, idNumber);
+}
 import { ApiError, Router, bodyOf, pageParams, paginated, requireUser, str } from '../http.ts';
 import { audit, camel, execute, nowIso, queryAll, queryOne } from '../db.ts';
 import { newId } from '../ids.ts';
@@ -114,7 +128,7 @@ export function registerClientRoutes(router: Router): void {
     const idType = str(body.idType, 'idType', { required: true });
     const idNumber = str(body.idNumber ?? body.id, 'idNumber', { required: true, max: 20 });
     const name = str(body.name, 'name', { required: true, max: 300 });
-    if (!validateIdentificacion(idType, idNumber)) {
+    if (!validClientIdentification(idType, idNumber)) {
       throw ApiError.badRequest('La identificación no es válida para el tipo seleccionado');
     }
     if (queryOne('SELECT id FROM clients WHERE id_type = ? AND id_number = ?', [idType, idNumber])) {
@@ -149,7 +163,7 @@ export function registerClientRoutes(router: Router): void {
     const idType = body.idType !== undefined ? str(body.idType, 'idType', { required: true }) : row.id_type;
     const idNumber =
       body.idNumber !== undefined ? str(body.idNumber, 'idNumber', { required: true, max: 20 }) : row.id_number;
-    if (!validateIdentificacion(idType, idNumber)) {
+    if (!validClientIdentification(idType, idNumber)) {
       throw ApiError.badRequest('La identificación no es válida para el tipo seleccionado');
     }
     const duplicated = queryOne('SELECT id FROM clients WHERE id_type = ? AND id_number = ? AND id <> ?', [
@@ -187,3 +201,4 @@ export function registerClientRoutes(router: Router): void {
 }
 
 export { camel };
+
