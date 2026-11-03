@@ -145,17 +145,36 @@ export function registerCompanyRoutes(router: Router): void {
     const signatureDigest = body.signatureDigest !== undefined ? String(body.signatureDigest) : row.signature_digest;
     if (!['sha1', 'sha256'].includes(signatureDigest)) throw ApiError.badRequest('Algoritmo de firma inválido (sha1|sha256)');
     const upconta = (body.upconta ?? {}) as Record<string, unknown>;
+
+    const newRuc = body.ruc !== undefined ? str(body.ruc, 'ruc', { required: true }) : row.ruc;
+    if (!/^\d{13}$/.test(newRuc)) {
+      throw ApiError.badRequest('El RUC debe tener 13 dígitos numéricos');
+    }
+    const newName = body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name;
+    const newTradeName = body.tradeName !== undefined ? str(body.tradeName, 'tradeName') || null : row.trade_name;
+    const newAddress = body.address !== undefined ? str(body.address, 'address') || null : row.address;
+    const newEmail = body.email !== undefined ? str(body.email, 'email') || null : row.email;
+    const newPhone = body.phone !== undefined ? str(body.phone, 'phone') || null : row.phone;
+    // El RUC identifica a la empresa/licencia en la plataforma: validarlo antes de guardar
+    // para no exponer nunca un error de restricción SQL.
+    const rucOwner = pOne<{ id: string }>('SELECT id FROM platform_companies WHERE ruc = ?', [newRuc]);
+    if (rucOwner && rucOwner.id !== row.id) {
+      throw ApiError.conflict(
+        `Ya existe otra empresa/licencia con el RUC ${newRuc}. Use un RUC diferente o edite la empresa existente.`,
+      );
+    }
+
     execute(
       `UPDATE company SET ruc=?, name=?, trade_name=?, address=?, email=?, phone=?, obliged_accounting=?, rimpe=?,
         agent_retention=?, environment=?, sri_mode=?, signature_digest=?, upconta_base_url=?, upconta_token=?,
         upconta_ruc=?, upconta_estab=?, upconta_pto_emi=?, updated_at=? WHERE id=?`,
       [
-        body.ruc !== undefined ? str(body.ruc, 'ruc', { required: true }) : row.ruc,
-        body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name,
-        body.tradeName !== undefined ? str(body.tradeName, 'tradeName') || null : row.trade_name,
-        body.address !== undefined ? str(body.address, 'address') || null : row.address,
-        body.email !== undefined ? str(body.email, 'email') || null : row.email,
-        body.phone !== undefined ? str(body.phone, 'phone') || null : row.phone,
+        newRuc,
+        newName,
+        newTradeName,
+        newAddress,
+        newEmail,
+        newPhone,
         body.obligedAccounting !== undefined ? (body.obligedAccounting ? 1 : 0) : row.obliged_accounting,
         body.rimpe !== undefined ? str(body.rimpe, 'rimpe') || null : row.rimpe,
         body.agentRetention !== undefined ? str(body.agentRetention, 'agentRetention') || null : row.agent_retention,
@@ -174,19 +193,17 @@ export function registerCompanyRoutes(router: Router): void {
       ],
     );
     // Mantener sincronizados los datos maestros en la licencia (plataforma).
-    pExec(
-      'UPDATE platform_companies SET ruc=?, name=?, trade_name=?, email=?, phone=?, address=?, updated_at=? WHERE id=?',
-      [
-        body.ruc !== undefined ? str(body.ruc, 'ruc', { required: true }) : row.ruc,
-        body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name,
-        body.tradeName !== undefined ? str(body.tradeName, 'tradeName') || null : row.trade_name,
-        body.email !== undefined ? str(body.email, 'email') || null : row.email,
-        body.phone !== undefined ? str(body.phone, 'phone') || null : row.phone,
-        body.address !== undefined ? str(body.address, 'address') || null : row.address,
-        nowIso(),
-        row.id,
-      ],
-    );
+    try {
+      pExec(
+        'UPDATE platform_companies SET ruc=?, name=?, trade_name=?, email=?, phone=?, address=?, updated_at=? WHERE id=?',
+        [newRuc, newName, newTradeName, newEmail, newPhone, newAddress, nowIso(), row.id],
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        throw ApiError.conflict(`Ya existe otra empresa/licencia con el RUC ${newRuc}.`);
+      }
+      throw error;
+    }
     audit('company', row.id, 'edit', `Configuración actualizada por ${auth.name}`, auth.id);
     return companyDto(getCompany());
   });
