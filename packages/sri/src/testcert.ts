@@ -153,7 +153,7 @@ function encrypt3des(plain: Buffer, password: string): Buffer {
 function buildMacData(authenticatedSafe: Buffer, password: string): Buffer {
   const salt = crypto.randomBytes(16);
   const iterations = 2048;
-  const key = derivePkcs12Key(password, salt, iterations, 3, 32);
+  const key = derivePkcs12Key(password, salt, iterations, 3, 32, 'sha256');
   const mac = crypto.createHmac('sha256', key).update(authenticatedSafe).digest();
   const digestInfo = seq(seq(oid('2.16.840.1.101.3.4.2.1'), nullValue()), octetString(mac));
   return seq(digestInfo, octetString(salt), integer(iterations));
