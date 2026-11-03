@@ -237,7 +237,7 @@ function collectBags(authenticatedSafeDer: Buffer, password: string): SafeBag[] 
       const eci = asSequence(edParts[1]!);
       const algorithm = readAlgorithm(eci[1]!);
       const encryptedContent = eci[2]!;
-      const cipherText = encryptedContent.content;
+      const cipherText = implicitOctets(encryptedContent);
       const plain = decryptData(algorithm, cipherText, password);
       bags.push(...parseSafeContents(plain));
       continue;
@@ -256,6 +256,15 @@ function pkcs8ToPem(pkcs8Der: Buffer): string {
   const root = parseDer(pkcs8Der);
   asSequence(root); // valida estructura PKCS#8
   return toPem('PRIVATE KEY', pkcs8Der);
+}
+
+/** Contenido de un OCTET STRING implícito en contexto [0] (primitivo o BER construido). */
+function implicitOctets(node: Asn1Node): Buffer {
+  if (node.tag === 0x80 || node.tag === 0xa0) {
+    if (!node.constructed) return node.content;
+    return Buffer.concat(node.children.map((child) => asOctetString(child)));
+  }
+  return asOctetString(node);
 }
 
 /** Comprueba que la clave privada corresponda al certificado. */
@@ -344,6 +353,7 @@ export function inspectSigningMaterial(certificatePem: string, privateKeyPem: st
     expired: new Date(cert.validTo).getTime() < Date.now(),
   };
 }
+
 
 
 

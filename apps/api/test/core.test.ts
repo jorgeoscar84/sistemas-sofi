@@ -29,6 +29,7 @@ const { buildClaveAcceso, parseClaveAcceso, modulo11, validateIdentificacion } =
 const {
   buildFacturaXml,
   buildAesTestP12,
+  buildBerTestP12,
   buildLegacyTestP12,
   buildTestP12,
   generateSelfSignedCertificate,
@@ -474,6 +475,12 @@ test('genera certificado de prueba, lo empaqueta en PKCS#12 y firma XML', async 
   assert.ok(aesParsed.subject?.includes('PRUEBA TEST'));
   assert.match(aesParsed.privateKeyPem, /BEGIN PRIVATE KEY/);
 
+  // PKCS#12 en BER con longitudes indefinidas (certificados de algunas entidades)
+  const berP12 = buildBerTestP12(certificatePem, privateKeyPem, 'clave123');
+  const berParsed = parseP12(berP12, 'clave123');
+  assert.ok(berParsed.subject?.includes('PRUEBA TEST'));
+  assert.match(berParsed.privateKeyPem, /BEGIN PRIVATE KEY/);
+
   // PKCS#12 "legacy": certificado cifrado con RC2-40 y clave con 3DES
   const legacy = buildLegacyTestP12(certificatePem, privateKeyPem, 'clave123');
   const legacyParsed = parseP12(legacy, 'clave123');
@@ -776,4 +783,5 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 

@@ -17,9 +17,11 @@ import {
   nullValue,
   octetString,
   oid,
+  parseDer,
   seq,
   setOf,
   tlv,
+  type Asn1Node,
   utcTime,
   utf8,
 } from './asn1.ts';
@@ -262,3 +264,20 @@ export function buildAesTestP12(certificatePem: string, privateKeyPem: string, p
   const authenticatedSafe = seq(contentTypeData(certContents), encryptAes256Pbes2(keyContents, password));
   return seq(integer(3), contentTypeData(authenticatedSafe));
 }
+
+/* ---------------------------------------- PKCS#12 codificado en BER (indefinido) */
+
+function berEncode(node: Asn1Node): Buffer {
+  if (!node.constructed) return tlv(node.tag, node.content);
+  const inner = Buffer.concat(node.children.map((child) => berEncode(child)));
+  return Buffer.concat([Buffer.from([node.tag, 0x80]), inner, Buffer.from([0x00, 0x00])]);
+}
+
+/**
+ * Convierte un PKCS#12 a BER con longitudes indefinidas, como generan algunas
+ * entidades certificadoras ecuatorianas. Sirve para probar el lector real.
+ */
+export function buildBerTestP12(certificatePem: string, privateKeyPem: string, password: string): Buffer {
+  return berEncode(parseDer(buildTestP12(certificatePem, privateKeyPem, password)));
+}
+
