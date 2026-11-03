@@ -334,8 +334,35 @@ function matches(certificateDer: Buffer, pkcs8Der: Buffer): boolean {
   }
 }
 
+/**
+ * Algunas entidades entregan el .p12 como texto Base64 o con cabeceras PEM
+ * (-----BEGIN PKCS12-----). Normaliza esas variantes antes de parsear.
+ */
+function normalizeP12Input(input: Buffer): Buffer {
+  const looksLikeDer = input.length > 0 && input[0] === 0x30;
+  if (looksLikeDer) return input;
+  const text = input.toString('utf8').replace(/^\uFEFF/, '').trim();
+  if (!text) return input;
+  const pemMatch = /-----BEGIN [^-]*PKCS[^ ]*12[^-]*-----([\s\S]*?)-----END [^-]+-----/i.exec(text);
+  const candidate = pemMatch ? pemMatch[1]!.replace(/\s+/g, '') : text.replace(/\s+/g, '');
+  if (/^[A-Za-z0-9+/=]{64,}$/.test(candidate)) {
+    try {
+      const decoded = Buffer.from(candidate, 'base64');
+      if (decoded.length > 0 && decoded[0] === 0x30) return decoded;
+    } catch {
+      /* se intenta con los bytes originales */
+    }
+  }
+  // Espacios o BOM antes del SEQUENCE inicial.
+  let offset = 0;
+  while (offset < input.length && (input[offset] === 0x20 || input[offset] === 0x0a || input[offset] === 0x0d || input[offset] === 0x09)) offset++;
+  if (offset > 0 && input[offset] === 0x30) return input.subarray(offset);
+  return input;
+}
+
 /** Lee un PKCS#12 y devuelve material de firma en PEM. */
-export function parseP12(p12: Buffer, password: string): P12Contents {
+export function parseP12(p12Raw: Buffer, password: string): P12Contents {
+  const p12 = normalizeP12Input(p12Raw);
   const root = parseDer(p12);
   const parts = asSequence(root);
   const authSafe = parts[1]!;
@@ -411,6 +438,7 @@ export function inspectSigningMaterial(certificatePem: string, privateKeyPem: st
     expired: new Date(cert.validTo).getTime() < Date.now(),
   };
 }
+
 
 
 
