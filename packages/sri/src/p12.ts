@@ -57,16 +57,21 @@ export function derivePkcs12Key(
   iterations: number,
   id: 1 | 2 | 3,
   size: number,
+  digestName: 'sha1' | 'sha224' | 'sha256' | 'sha384' | 'sha512' = 'sha1',
 ): Buffer {
-  const u = 20; // SHA-1
-  const v = 64;
+  // PKCS#12 general method: u = tamaño del hash, v = tamaño de bloque
+  // (SHA-1/SHA-224/SHA-256 usan 64 bytes; SHA-384/SHA-512 usan 128).
+  const u = crypto.createHash(digestName).update('').digest().length;
+  const v = digestName === 'sha384' || digestName === 'sha512' ? 128 : 64;
   const passwordBytes = Buffer.from(`${password}\u0000`, 'utf16le').swap16();
   const D = Buffer.alloc(v, id);
   const expand = (data: Buffer) => {
     if (data.length === 0) return Buffer.alloc(0);
-    const repeat = Math.ceil(v / data.length) * data.length;
-    const out = Buffer.alloc(repeat);
-    for (let i = 0; i < repeat; i += data.length) data.copy(out, i);
+    // PKCS#12: la cadena se repite hasta completar un múltiplo de v bytes
+    // y se trunca exactamente a ese tamaño.
+    const target = Math.ceil(data.length / v) * v;
+    const out = Buffer.alloc(target);
+    for (let i = 0; i < target; i++) out[i] = data[i % data.length]!;
     return out;
   };
   const S = expand(salt);
@@ -75,9 +80,9 @@ export function derivePkcs12Key(
   const result: Buffer[] = [];
   let produced = 0;
   while (produced < size) {
-    let A = crypto.createHash('sha1').update(Buffer.concat([D, I])).digest();
+    let A = crypto.createHash(digestName).update(Buffer.concat([D, I])).digest();
     for (let round = 1; round < iterations; round++) {
-      A = crypto.createHash('sha1').update(A).digest();
+      A = crypto.createHash(digestName).update(A).digest();
     }
     result.push(A);
     produced += A.length;
@@ -103,7 +108,7 @@ export function derivePkcs12Key(
 
 /* ---------------------------------------------------------------- MAC */
 
-const DIGEST_OIDS: Record<string, { digest: string; size: number }> = {
+const DIGEST_OIDS: Record<string, { digest: 'sha1' | 'sha224' | 'sha256' | 'sha384' | 'sha512'; size: number }> = {
   '1.3.14.3.2.26': { digest: 'sha1', size: 20 },
   '2.16.840.1.101.3.4.2.4': { digest: 'sha224', size: 28 },
   '2.16.840.1.101.3.4.2.1': { digest: 'sha256', size: 32 },
@@ -125,7 +130,7 @@ function verifyMac(macData: Asn1Node, authSafeBytes: Buffer, password: string): 
   const iterations = parts[2] ? Number(asInteger(parts[2])) : 1;
   const entry = DIGEST_OIDS[algorithm.oid];
   if (!entry) throw new Error(`Algoritmo de MAC PKCS#12 no soportado: ${algorithm.oid}`);
-  const key = derivePkcs12Key(password, salt, iterations, 3, entry.size);
+  const key = derivePkcs12Key(password, salt, iterations, 3, entry.size, entry.digest);
   const actual = crypto.createHmac(entry.digest, key).update(authSafeBytes).digest();
   if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) {
     throw new Error(

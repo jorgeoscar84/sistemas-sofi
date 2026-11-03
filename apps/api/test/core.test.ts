@@ -33,6 +33,7 @@ const {
   buildBerTestP12,
   buildLegacyTestP12,
   buildTestP12,
+  derivePkcs12Key,
   generateSelfSignedCertificate,
   parseP12,
   signXml,
@@ -799,6 +800,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 
 
 
