@@ -158,7 +158,7 @@ async function renderCompany(root) {
             ${field('Dirección matriz', `<input name="address" value="${esc(company.address || '')}" />`)}
             ${field('Correo electrónico', `<input name="email" type="email" value="${esc(company.email || '')}" />`)}
             ${field('Teléfono', `<input name="phone" value="${esc(company.phone || '')}" />`)}
-            ${field('Régimen RIMPE', `<input name="rimpe" value="${esc(company.rimpe || '')}" placeholder="CONTRIBUYENTE RÉGIMEN RIMPE" />`)}
+            ${field('Régimen RIMPE', `<select name="rimpe">${option('', 'No aplica / otro régimen', company.rimpe || '')}${option('CONTRIBUYENTE RÉGIMEN RIMPE', 'RIMPE · Emprendedor', company.rimpe)}${option('CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE', 'RIMPE · Negocio Popular', company.rimpe)}</select>`)}
             ${field('Agente de retención', `<input name="agentRetention" value="${esc(company.agentRetention || '')}" placeholder="Nro. resolución (opcional)" />`)}
             ${field('Obligado a llevar contabilidad', `<select name="obligedAccounting">${option('true', 'Sí', String(company.obligedAccounting))}${option('false', 'No', String(company.obligedAccounting))}</select>`)}
             ${field('Ambiente SRI', `<select name="environment">${option('1', '1 · Pruebas', company.environment)}${option('2', '2 · Producción', company.environment)}</select>`)}
