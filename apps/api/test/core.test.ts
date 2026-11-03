@@ -482,6 +482,15 @@ test('genera certificado de prueba, lo empaqueta en PKCS#12 y firma XML', async 
   const aes512Parsed = parseP12(aes512, 'clave123');
   assert.ok(aes512Parsed.subject?.includes('PRUEBA TEST'));
 
+  // PKCS#12 entregado como Base64 o PEM (algunas entidades lo envían así)
+  const p12Base64Text = Buffer.from(buildTestP12(certificatePem, privateKeyPem, 'clave123').toString('base64'), 'utf8');
+  assert.ok(parseP12(p12Base64Text, 'clave123').subject?.includes('PRUEBA TEST'));
+  const p12Pem = Buffer.from(
+    `-----BEGIN PKCS12-----\n${buildTestP12(certificatePem, privateKeyPem, 'clave123').toString('base64')}\n-----END PKCS12-----\n`,
+    'utf8',
+  );
+  assert.ok(parseP12(p12Pem, 'clave123').subject?.includes('PRUEBA TEST'));
+
   // PKCS#12 en BER con longitudes indefinidas (certificados de algunas entidades)
   const berP12 = buildBerTestP12(certificatePem, privateKeyPem, 'clave123');
   const berParsed = parseP12(berP12, 'clave123');
@@ -790,6 +799,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 
 
 
