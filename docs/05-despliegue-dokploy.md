@@ -101,6 +101,7 @@ Esto es un proyecto aparte; hacerlo antes de validar la facturación real agrega
 | `SMTP_PASS` | Clave/API key SMTP |
 | `SMTP_FROM` | Remitente verificado, ej. `Sistemas Sofi <no-reply@su-dominio.com>` |
 | `SMTP_SECURE` | `true` para TLS directo (puerto 465); `false` para STARTTLS |
+| `BREVO_API_KEY` | API key de Brevo para enviar por API (alternativa a SMTP) |
 
 ## 5. Volúmenes
 
