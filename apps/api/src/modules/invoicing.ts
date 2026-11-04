@@ -34,6 +34,7 @@ import {
 } from '../../../../packages/sri/src/index.ts';
 import { ApiError, Router, bodyOf, pageParams, paginated, requireUser, str } from '../http.ts';
 import { audit, auditList, camelAll, execute, nowIso, parseJson, queryAll, queryOne, transaction } from '../db.ts';
+import { sendMail } from '../mailer.ts';
 import { newId } from '../ids.ts';
 import { getCompany, getEstablishments } from './company.ts';
 import { ensureClient, ensureConsumidorFinal, findClient } from './clients.ts';
@@ -1393,19 +1394,52 @@ export function registerInvoicingRoutes(router: Router): void {
     };
   });
 
-  router.post('/api/vouchers/:id/email', 'invoicing:read', (ctx) => {
+  router.post('/api/vouchers/:id/email', 'invoicing:read', async (ctx) => {
+    const auth = requireUser(ctx);
     const row = getVoucherOrThrow(ctx.params.id);
     const client = row.client_id ? findClient(row.client_id) : undefined;
     const company = getCompany();
-    const smtpConfigured = Boolean(company.email);
-    return {
-      sent: false,
-      reason: smtpConfigured
-        ? 'Envío SMTP no implementado en el runtime sin dependencias; descargue el PDF/RIDE y envíelo manualmente.'
-        : 'No hay correo configurado para la empresa.',
-      to: client?.email ?? null,
-      voucherId: row.id,
-    };
+    if (!client?.email) {
+      return { sent: false, to: null, reason: 'El cliente no tiene correo electrónico registrado.' };
+    }
+    if (row.status !== 'issued') {
+      return { sent: false, to: client.email, reason: 'Solo se envían comprobantes autorizados por el SRI.' };
+    }
+    const number = voucherNumber(row);
+    const xml = row.xml_authorized || row.xml_signed || '';
+    const subject = `Factura electrónica ${number} - ${company.name}`;
+    const text = [
+      `Estimado/a ${client.name},`,
+      '',
+      `Adjuntamos la factura electrónica ${number}, autorizada por el SRI.`,
+      `Total: USD ${(row.total_cents / 100).toFixed(2)}`,
+      `Clave de acceso / autorización: ${row.authorization_number ?? row.access_key ?? ''}`,
+      '',
+      `Emisor: ${company.name} · RUC ${company.ruc}`,
+      '',
+      'Este mensaje fue generado automáticamente por el sistema de facturación.',
+    ].join('\r\n');
+    try {
+      await sendMail({
+        to: client.email,
+        subject,
+        text,
+        attachments: [
+          { filename: `${number}.pdf`, contentType: 'application/pdf', content: buildRideBuffer(row) },
+          ...(xml
+            ? [{ filename: `${number}.xml`, contentType: 'application/xml', content: Buffer.from(xml, 'utf8') }]
+            : []),
+        ],
+      });
+      audit('vouchers', row.id, 'email', `Factura enviada a ${client.email}`, auth.id);
+      return { sent: true, to: client.email, subject };
+    } catch (error) {
+      return {
+        sent: false,
+        to: client.email,
+        reason: `No se pudo enviar: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   });
 
   router.post('/api/vouchers/:id/credit-note', 'invoicing:create', async (ctx) => {

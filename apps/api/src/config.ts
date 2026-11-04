@@ -30,6 +30,7 @@ export const config = {
     user: env('SMTP_USER', ''),
     pass: env('SMTP_PASS', ''),
     from: env('SMTP_FROM', 'Facturacion EC <no-reply@facturacion.local>'),
+    secure: env('SMTP_SECURE', 'false').toLowerCase() === 'true',
   },
   /** Certificado PEM de ejemplo para firma (modo direct-sri). */
   defaultEnvironment: Number(env('SRI_ENVIRONMENT', '1')) === 2 ? 2 : 1,

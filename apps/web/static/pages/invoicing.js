@@ -1502,12 +1502,19 @@ async function renderDetail(root, ctx) {
         try {
           const result = await withBusy(button, () => apiPost(`/vouchers/${voucher.id}/email`));
           const to = result && result.to ? result.to : 'sin correo registrado';
-          openInfoModal(
-            'Envío por correo',
-            `<p class="muted small">Destino: <b>${esc(to)}</b></p>
-             <p class="small">${esc((result && result.reason) || 'El envío de correo no está configurado.')}</p>
-             <p class="muted small" style="margin:0">Puede descargar el RIDE o el XML desde las acciones del comprobante y enviarlos manualmente.</p>`,
-          );
+          if (result && result.sent) {
+            openInfoModal(
+              'Correo enviado',
+              `<p class="small">La factura fue enviada a <b>${esc(to)}</b> con el RIDE y el XML adjuntos.</p>`,
+            );
+          } else {
+            openInfoModal(
+              'Envío por correo',
+              `<p class="muted small">Destino: <b>${esc(to)}</b></p>
+               <p class="small">${esc((result && result.reason) || 'El envío de correo no está configurado.')}</p>
+               <p class="muted small" style="margin:0">Puede descargar el RIDE o el XML desde las acciones del comprobante y enviarlos manualmente.</p>`,
+            );
+          }
         } catch (error) {
           toastError(error);
         }
