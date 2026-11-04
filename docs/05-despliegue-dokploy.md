@@ -157,3 +157,4 @@ En Dokploy revisar **Logs** (aplicación) y **Deployments** (build). Errores tí
 - [ ] Respaldo automático configurado y restauración probada.
 - [ ] Certificado real del SRI cargado y prueba de autorización realizada.
 - [ ] Facturación real validada con un comprobante autorizado.
+
