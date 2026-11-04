@@ -95,6 +95,12 @@ Esto es un proyecto aparte; hacerlo antes de validar la facturación real agrega
 | `TENANTS_DIR` | `/app/data/tenants` |
 | `STORAGE_DIR` | `/app/storage` |
 | `CERT_DIR` | `/app/storage/certs` |
+| `SMTP_HOST` | Servidor SMTP (ej. `smtp-relay.brevo.com`) |
+| `SMTP_PORT` | Puerto SMTP (`587` STARTTLS / `465` TLS directo) |
+| `SMTP_USER` | Usuario SMTP |
+| `SMTP_PASS` | Clave/API key SMTP |
+| `SMTP_FROM` | Remitente verificado, ej. `Sistemas Sofi <no-reply@su-dominio.com>` |
+| `SMTP_SECURE` | `true` para TLS directo (puerto 465); `false` para STARTTLS |
 
 ## 5. Volúmenes
 
