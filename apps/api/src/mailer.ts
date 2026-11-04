@@ -279,7 +279,10 @@ async function sendViaBrevo(message: MailMessage): Promise<{ messageId: string }
 }
 
 export async function sendMail(message: MailMessage): Promise<{ messageId: string }> {
-  if (config.brevoApiKey) return sendViaBrevo(message);
+  // Si hay credenciales SMTP completas, se prefiere SMTP; si no, API de Brevo.
+  if (config.brevoApiKey && !(config.smtp.host && config.smtp.user && config.smtp.pass)) {
+    return sendViaBrevo(message);
+  }
   const smtp = config.smtp;
   if (!smtp.host || !smtp.user || !smtp.pass) {
     throw new Error('SMTP no configurado. Defina SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS y SMTP_FROM.');
