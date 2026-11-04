@@ -238,7 +238,48 @@ function dotStuff(body: string): string {
     .join('\r\n');
 }
 
+function parseSender(value: string): { name: string; email: string } {
+  const match = /^(.*?)<([^>]+)>/.exec(value);
+  if (match) return { name: (match[1] ?? '').trim() || 'Sistemas Sofi', email: match[2]!.trim() };
+  return { name: 'Sistemas Sofi', email: value.trim() };
+}
+
+async function sendViaBrevo(message: MailMessage): Promise<{ messageId: string }> {
+  const key = config.brevoApiKey;
+  if (!key) throw new Error('Brevo no configurado: defina BREVO_API_KEY.');
+  const sender = parseSender(config.smtp.from);
+  const body: Record<string, unknown> = {
+    sender,
+    to: [{ email: addressOnly(message.to) }],
+    subject: message.subject,
+    textContent: message.text,
+  };
+  if (message.html) body.htmlContent = message.html;
+  if (message.attachments?.length) {
+    body.attachment = message.attachments.map((attachment) => ({
+      name: attachment.filename,
+      content: attachment.content.toString('base64'),
+    }));
+  }
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': key, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`Brevo ${response.status}: ${text.slice(0, 500)}`);
+  let data: { messageId?: string } = {};
+  try {
+    data = JSON.parse(text) as { messageId?: string };
+  } catch {
+    /* respuesta vacía */
+  }
+  return { messageId: data.messageId ?? 'enviado' };
+}
+
 export async function sendMail(message: MailMessage): Promise<{ messageId: string }> {
+  if (config.brevoApiKey) return sendViaBrevo(message);
   const smtp = config.smtp;
   if (!smtp.host || !smtp.user || !smtp.pass) {
     throw new Error('SMTP no configurado. Defina SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS y SMTP_FROM.');

@@ -32,6 +32,8 @@ export const config = {
     from: env('SMTP_FROM', 'Facturacion EC <no-reply@facturacion.local>'),
     secure: env('SMTP_SECURE', 'false').toLowerCase() === 'true',
   },
+  /** Envío por API de Brevo (la API key no es la SMTP key). */
+  brevoApiKey: env('BREVO_API_KEY', ''),
   /** Certificado PEM de ejemplo para firma (modo direct-sri). */
   defaultEnvironment: Number(env('SRI_ENVIRONMENT', '1')) === 2 ? 2 : 1,
   /** Correo de la empresa para reenvíos. */
