@@ -123,7 +123,7 @@ export function generarRidePdf(model: RideModel): Buffer {
   pdf.rect(MARGIN, y - 9, RIGHT - MARGIN, 14, 0.92);
   headers.forEach((header, i) => {
     const alignRight = i >= 2;
-    if (alignRight) pdf.textRight(colX[i + 1]! - 3, y, header, { size: 7, font: 'Helvetica-Bold' });
+    if (alignRight) pdf.textRight((colX[i + 1] ?? RIGHT) - 3, y, header, { size: 7, font: 'Helvetica-Bold' });
     else pdf.text(colX[i]! + 2, y, header, { size: 7, font: 'Helvetica-Bold' });
   });
   y += 12;
