@@ -50,6 +50,34 @@ function columnsOf(sqlite, table) {
     .map((row) => String(row.name));
 }
 
+/** Ordena tablas para insertar primero las referenciadas (respeta FKs). */
+function orderedTables(sqlite) {
+  const tables = tableNames(sqlite);
+  const known = new Set(tables);
+  const dependencies = new Map();
+  for (const table of tables) {
+    const refs = sqlite
+      .prepare(`PRAGMA foreign_key_list("${table.replaceAll('"', '""')}")`)
+      .all()
+      .map((row) => String(row.table))
+      .filter((ref) => ref !== table && known.has(ref));
+    dependencies.set(table, [...new Set(refs)]);
+  }
+  const visited = new Set();
+  const visiting = new Set();
+  const order = [];
+  function visit(table) {
+    if (visited.has(table) || visiting.has(table)) return;
+    visiting.add(table);
+    for (const dependency of dependencies.get(table) ?? []) visit(dependency);
+    visiting.delete(table);
+    visited.add(table);
+    order.push(table);
+  }
+  for (const table of tables) visit(table);
+  return order;
+}
+
 function quoteIdent(value) {
   if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(value)) throw new Error(`Identificador inválido: ${value}`);
   return `"${value}"`;
@@ -72,7 +100,7 @@ async function copyTable(sqlite, table, insert, { platform = false } = {}) {
 async function migratePlatform() {
   const sqlite = openSqlite(platformFile);
   try {
-    const tables = tableNames(sqlite);
+    const tables = orderedTables(sqlite);
     const migrated = [];
     await platformTransaction(async () => {
       for (const table of tables) {
@@ -99,7 +127,7 @@ async function migrateTenants() {
     if (!/^[A-Za-z0-9_-]+$/.test(companyId)) continue;
     const sqlite = openSqlite(path.join(tenantsDir, file));
     try {
-      const tables = tableNames(sqlite);
+      const tables = orderedTables(sqlite);
       await createTenantDb(companyId);
       const migrated = [];
       await runWithTenantAsync(companyId, async () => {
