@@ -25,8 +25,8 @@ interface ProductRow {
   updated_at: string;
 }
 
-function productDto(row: ProductRow) {
-  const stocks = queryAll<{ warehouse_id: string; name: string; amount: number; avg_cost_cents: number }>(
+async function productDto(row: ProductRow) {
+  const stocks = await queryAll<{ warehouse_id: string; name: string; amount: number; avg_cost_cents: number }>(
     `SELECT s.warehouse_id, w.name, s.amount, s.avg_cost_cents FROM stocks s
      JOIN warehouses w ON w.id = s.warehouse_id WHERE s.product_id = ? ORDER BY w.name ASC`,
     [row.id],
@@ -58,8 +58,8 @@ function productDto(row: ProductRow) {
   };
 }
 
-export function findProduct(id: string): ProductRow | undefined {
-  return queryOne<ProductRow>('SELECT * FROM products WHERE id = ?', [id]);
+export async function findProduct(id: string): Promise<ProductRow | undefined> {
+  return await queryOne<ProductRow>('SELECT * FROM products WHERE id = ?', [id]);
 }
 
 function validateIva(code: string): void {
@@ -70,15 +70,15 @@ function validateIva(code: string): void {
 
 export function registerCatalogRoutes(router: Router): void {
   /* ------------------------------------------------------------ categorías */
-  router.get('/api/categories', 'catalog:read', () =>
-    camelAll(queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC')),
+  router.get('/api/categories', 'catalog:read', async () =>
+    camelAll(await queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC')),
   );
 
-  router.post('/api/categories', 'catalog:write', (ctx) => {
+  router.post('/api/categories', 'catalog:write', async (ctx) => {
     const body = bodyOf<Record<string, unknown>>(ctx);
     const name = str(body.name, 'name', { required: true, max: 200 });
     const id = newId();
-    execute('INSERT INTO categories (id, name, parent_id, created_at) VALUES (?,?,?,?)', [
+    await execute('INSERT INTO categories (id, name, parent_id, created_at) VALUES (?,?,?,?)', [
       id,
       name,
       str(body.parentId, 'parentId') || null,
@@ -87,35 +87,37 @@ export function registerCatalogRoutes(router: Router): void {
     return { id, name, parentId: str(body.parentId, 'parentId') || null };
   });
 
-  router.put('/api/categories/:id', 'catalog:write', (ctx) => {
-    const row = queryOne('SELECT * FROM categories WHERE id = ?', [ctx.params.id]);
+  router.put('/api/categories/:id', 'catalog:write', async (ctx) => {
+    const row = await queryOne('SELECT * FROM categories WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Categoría no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
-    execute('UPDATE categories SET name = ?, parent_id = ? WHERE id = ?', [
+    await execute('UPDATE categories SET name = ?, parent_id = ? WHERE id = ?', [
       body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name,
       body.parentId !== undefined ? str(body.parentId, 'parentId') || null : row.parent_id,
       ctx.params.id,
     ]);
-    return camelAll(queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC'));
+    return camelAll(await queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC'));
   });
 
-  router.delete('/api/categories/:id', 'catalog:write', (ctx) => {
-    execute('UPDATE products SET category_id = NULL WHERE category_id = ?', [ctx.params.id]);
-    execute('DELETE FROM categories WHERE id = ?', [ctx.params.id]);
+  router.delete('/api/categories/:id', 'catalog:write', async (ctx) => {
+    await execute('UPDATE products SET category_id = NULL WHERE category_id = ?', [ctx.params.id]);
+    await execute('DELETE FROM categories WHERE id = ?', [ctx.params.id]);
     return { message: 'Categoría eliminada' };
   });
 
   /* -------------------------------------------------------------- unidades */
-  router.get('/api/units', 'catalog:read', () =>
-    camelAll(queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC')),
+  router.get('/api/units', 'catalog:read', async () =>
+    camelAll(await queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC')),
   );
 
-  router.post('/api/units', 'catalog:write', (ctx) => {
+  router.post('/api/units', 'catalog:write', async (ctx) => {
     const body = bodyOf<Record<string, unknown>>(ctx);
     const code = str(body.code, 'code', { required: true, max: 10 }).toUpperCase();
-    if (queryOne('SELECT id FROM units WHERE code = ?', [code])) throw ApiError.conflict('Ya existe una unidad con ese código');
+    if (await queryOne('SELECT id FROM units WHERE code = ?', [code])) {
+      throw ApiError.conflict('Ya existe una unidad con ese código');
+    }
     const id = newId();
-    execute('INSERT INTO units (id, code, name, abbr) VALUES (?,?,?,?)', [
+    await execute('INSERT INTO units (id, code, name, abbr) VALUES (?,?,?,?)', [
       id,
       code,
       str(body.name, 'name', { required: true }),
@@ -124,35 +126,35 @@ export function registerCatalogRoutes(router: Router): void {
     return { id, code, name: str(body.name, 'name', { required: true }), abbr: str(body.abbr, 'abbr') || code };
   });
 
-  router.put('/api/units/:id', 'catalog:write', (ctx) => {
-    const row = queryOne('SELECT * FROM units WHERE id = ?', [ctx.params.id]);
+  router.put('/api/units/:id', 'catalog:write', async (ctx) => {
+    const row = await queryOne('SELECT * FROM units WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Unidad no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
-    execute('UPDATE units SET code=?, name=?, abbr=? WHERE id=?', [
+    await execute('UPDATE units SET code=?, name=?, abbr=? WHERE id=?', [
       body.code !== undefined ? str(body.code, 'code', { required: true }).toUpperCase() : row.code,
       body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name,
       body.abbr !== undefined ? str(body.abbr, 'abbr') || row.abbr : row.abbr,
       ctx.params.id,
     ]);
-    return camelAll(queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC'));
+    return camelAll(await queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC'));
   });
 
-  router.delete('/api/units/:id', 'catalog:write', (ctx) => {
-    execute('UPDATE products SET unit_id = NULL WHERE unit_id = ?', [ctx.params.id]);
-    execute('DELETE FROM units WHERE id = ?', [ctx.params.id]);
+  router.delete('/api/units/:id', 'catalog:write', async (ctx) => {
+    await execute('UPDATE products SET unit_id = NULL WHERE unit_id = ?', [ctx.params.id]);
+    await execute('DELETE FROM units WHERE id = ?', [ctx.params.id]);
     return { message: 'Unidad eliminada' };
   });
 
   /* -------------------------------------------------------------- opciones */
-  router.get('/api/products/options', 'catalog:read', () => ({
-    categories: camelAll(queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC')),
-    units: camelAll(queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC')),
+  router.get('/api/products/options', 'catalog:read', async () => ({
+    categories: camelAll(await queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC')),
+    units: camelAll(await queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC')),
     iva: PORCENTAJES_DE_IVA,
     ice: PORCENTAJES_DE_ICE,
   }));
 
   /* ------------------------------------------------------- búsqueda rápida */
-  router.get('/api/products/search', 'catalog:read', (ctx) => {
+  router.get('/api/products/search', 'catalog:read', async (ctx) => {
     const q = (ctx.query.get('q') ?? '').trim();
     const type = ctx.query.get('type');
     const where: string[] = ["status = 'active'"];
@@ -165,30 +167,32 @@ export function registerCatalogRoutes(router: Router): void {
       where.push('type = ?');
       params.push(type);
     }
-    const rows = queryAll<ProductRow>(
+    const rows = await queryAll<ProductRow>(
       `SELECT * FROM products WHERE ${where.join(' AND ')} ORDER BY description ASC LIMIT 20`,
       params,
     );
-    return rows.map((row) => {
-      const stock = queryOne<{ total: number }>(
-        'SELECT COALESCE(SUM(amount),0) AS total FROM stocks WHERE product_id = ?',
-        [row.id],
-      );
-      return {
-        id: row.id,
-        type: row.type,
-        code: row.code,
-        description: row.description,
-        priceCents: row.price_cents,
-        ivaCode: row.iva_code,
-        trackStock: Boolean(row.track_stock),
-        totalStock: Number(stock?.total ?? 0),
-      };
-    });
+    return await Promise.all(
+      rows.map(async (row) => {
+        const stock = await queryOne<{ total: number }>(
+          'SELECT COALESCE(SUM(amount),0) AS total FROM stocks WHERE product_id = ?',
+          [row.id],
+        );
+        return {
+          id: row.id,
+          type: row.type,
+          code: row.code,
+          description: row.description,
+          priceCents: row.price_cents,
+          ivaCode: row.iva_code,
+          trackStock: Boolean(row.track_stock),
+          totalStock: Number(stock?.total ?? 0),
+        };
+      }),
+    );
   });
 
   /* ------------------------------------------------------------- productos */
-  router.get('/api/products', 'catalog:read', (ctx) => {
+  router.get('/api/products', 'catalog:read', async (ctx) => {
     const { page, limit, offset } = pageParams(ctx.query);
     const type = (ctx.query.get('type') ?? '').trim();
     const q = (ctx.query.get('q') ?? '').trim();
@@ -213,22 +217,23 @@ export function registerCatalogRoutes(router: Router): void {
       params.push(status);
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const total = queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM products ${clause}`, params)?.total ?? 0;
-    const rows = queryAll<ProductRow>(`SELECT * FROM products ${clause} ORDER BY description ASC LIMIT ? OFFSET ?`, [
+    const total =
+      (await queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM products ${clause}`, params))?.total ?? 0;
+    const rows = await queryAll<ProductRow>(`SELECT * FROM products ${clause} ORDER BY description ASC LIMIT ? OFFSET ?`, [
       ...params,
       limit,
       offset,
     ]);
-    return paginated(rows.map(productDto), total, page, limit);
+    return paginated(await Promise.all(rows.map(productDto)), total, page, limit);
   });
 
-  router.get('/api/products/:id', 'catalog:read', (ctx) => {
-    const row = findProduct(ctx.params.id);
+  router.get('/api/products/:id', 'catalog:read', async (ctx) => {
+    const row = await findProduct(ctx.params.id);
     if (!row) throw ApiError.notFound('Producto no encontrado');
-    return productDto(row);
+    return await productDto(row);
   });
 
-  router.post('/api/products', 'catalog:write', (ctx) => {
+  router.post('/api/products', 'catalog:write', async (ctx) => {
     const auth = requireUser(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const type = str(body.type, 'type') || 'product';
@@ -237,11 +242,11 @@ export function registerCatalogRoutes(router: Router): void {
     const description = str(body.description, 'description', { required: true, max: 300 });
     const ivaCode = str(body.ivaCode, 'ivaCode') || '4';
     validateIva(ivaCode);
-    if (queryOne('SELECT id FROM products WHERE type = ? AND code = ?', [type, code])) {
+    if (await queryOne('SELECT id FROM products WHERE type = ? AND code = ?', [type, code])) {
       throw ApiError.conflict('Ya existe un producto con ese código');
     }
     const id = newId();
-    execute(
+    await execute(
       `INSERT INTO products (id, type, code, aux_code, description, category_id, unit_id, price_cents, cost_cents,
         iva_code, ice_code, irbpnr_code, status, track_stock, min_stock, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -265,18 +270,18 @@ export function registerCatalogRoutes(router: Router): void {
         nowIso(),
       ],
     );
-    audit('products', id, 'created', `Creado por ${auth.name}`, auth.id);
-    return productDto(findProduct(id)!);
+    await audit('products', id, 'created', `Creado por ${auth.name}`, auth.id);
+    return await productDto((await findProduct(id))!);
   });
 
-  router.put('/api/products/:id', 'catalog:write', (ctx) => {
+  router.put('/api/products/:id', 'catalog:write', async (ctx) => {
     const auth = requireUser(ctx);
-    const row = findProduct(ctx.params.id);
+    const row = await findProduct(ctx.params.id);
     if (!row) throw ApiError.notFound('Producto no encontrado');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const ivaCode = body.ivaCode !== undefined ? str(body.ivaCode, 'ivaCode', { required: true }) : row.iva_code;
     validateIva(ivaCode);
-    execute(
+    await execute(
       `UPDATE products SET aux_code=?, description=?, category_id=?, unit_id=?, price_cents=?, cost_cents=?, iva_code=?,
         ice_code=?, irbpnr_code=?, status=?, track_stock=?, min_stock=?, updated_at=? WHERE id=?`,
       [
@@ -296,16 +301,16 @@ export function registerCatalogRoutes(router: Router): void {
         row.id,
       ],
     );
-    audit('products', row.id, 'edit', `Editado por ${auth.name}`, auth.id);
-    return productDto(findProduct(row.id)!);
+    await audit('products', row.id, 'edit', `Editado por ${auth.name}`, auth.id);
+    return await productDto((await findProduct(row.id))!);
   });
 
-  router.delete('/api/products/:id', 'catalog:write', (ctx) => {
+  router.delete('/api/products/:id', 'catalog:write', async (ctx) => {
     const auth = requireUser(ctx);
-    const row = findProduct(ctx.params.id);
+    const row = await findProduct(ctx.params.id);
     if (!row) throw ApiError.notFound('Producto no encontrado');
-    execute('UPDATE products SET status = ?, updated_at = ? WHERE id = ?', ['inactive', nowIso(), row.id]);
-    audit('products', row.id, 'deleted', `Desactivado por ${auth.name}`, auth.id);
+    await execute('UPDATE products SET status = ?, updated_at = ? WHERE id = ?', ['inactive', nowIso(), row.id]);
+    await audit('products', row.id, 'deleted', `Desactivado por ${auth.name}`, auth.id);
     return { message: 'Producto desactivado' };
   });
 }

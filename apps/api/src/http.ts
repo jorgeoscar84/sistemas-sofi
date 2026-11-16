@@ -209,7 +209,7 @@ export class Router {
         await authenticate(ctx);
       }
       const companyId = ctx.authUser?.companyId ?? null;
-      return { handled: true, result: await runWithTenantAsync(companyId, () => route.handler(ctx)) };
+      return { handled: true, result: await runWithTenantAsync(companyId, async () => route.handler(ctx)) };
     }
     return { handled: false };
   }
@@ -252,12 +252,12 @@ export async function authenticate(ctx: Ctx): Promise<AuthUser | null> {
   const header = String(ctx.req.headers.authorization ?? '');
   if (header.startsWith('ApiToken ')) {
     const token = header.slice('ApiToken '.length).trim();
-    const row = pOne<{ id: string; name: string; company_id: string | null }>(
+    const row = await pOne<{ id: string; name: string; company_id: string | null }>(
       "SELECT t.id, t.name, t.company_id FROM platform_api_tokens t WHERE t.token_hash = ? AND t.status = 'active'",
       [sha256(token)],
     );
     if (!row || !row.company_id) return null;
-    assertCompanyUsable(pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [row.company_id]));
+    assertCompanyUsable(await pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [row.company_id]));
     ctx.authUser = {
       id: row.id,
       username: `api:${row.name}`,
@@ -273,7 +273,7 @@ export async function authenticate(ctx: Ctx): Promise<AuthUser | null> {
   if (!header.startsWith('Bearer ')) return null;
   const payload = verifyToken(header.slice('Bearer '.length).trim());
   if (!payload || typeof payload.sub !== 'string') return null;
-  const row = pOne<PlatformUserRow>('SELECT * FROM platform_users WHERE id = ?', [payload.sub]);
+  const row = await pOne<PlatformUserRow>('SELECT * FROM platform_users WHERE id = ?', [payload.sub]);
   if (!row || row.status !== 'active') return null;
   const isSuperadmin = row.role === 'superadmin';
   let companyId: string | null = row.company_id;
@@ -281,7 +281,7 @@ export async function authenticate(ctx: Ctx): Promise<AuthUser | null> {
   if (isSuperadmin) {
     const requested = String(ctx.req.headers['x-company-id'] ?? '').trim();
     if (requested) {
-      const company = pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [requested]);
+      const company = await pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [requested]);
       if (!company) throw ApiError.badRequest('La empresa seleccionada no existe');
       companyId = company.id;
     } else {
@@ -291,7 +291,7 @@ export async function authenticate(ctx: Ctx): Promise<AuthUser | null> {
     if (!companyId) {
       throw ApiError.forbidden('El usuario no tiene una empresa asignada');
     }
-    assertCompanyUsable(pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [companyId]));
+    assertCompanyUsable(await pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [companyId]));
   }
 
   ctx.authUser = {
@@ -490,3 +490,4 @@ export function intCents(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n) : 0;
 }
+

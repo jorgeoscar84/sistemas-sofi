@@ -1,5 +1,5 @@
 # Imagen de producción para la plataforma multiempresa
-# Node 24 incluye node:sqlite, node:crypto y ejecución nativa de TypeScript.
+# Node 24 + PostgreSQL 18 (driver pg).
 FROM node:24-bookworm-slim
 
 ENV NODE_ENV=production \
@@ -9,8 +9,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Sin dependencias externas: solo se copia el código.
-COPY package.json ./
+# Dependencias de producción (pg). PGlite/TypeScript son solo de desarrollo.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts

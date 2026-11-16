@@ -7,19 +7,13 @@
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fe-test-'));
-process.env.DB_PATH = path.join(tmpDir, 'legacy.db');
-process.env.PLATFORM_DB_PATH = path.join(tmpDir, 'platform.db');
-process.env.TENANTS_DIR = path.join(tmpDir, 'tenants');
+process.env.DB_DRIVER = 'pglite';
 process.env.PORT = '0';
 process.env.JWT_SECRET = 'test-secret';
 
 const { startServer } = await import('../src/server.ts');
-const { pExec, queryOne, setDefaultTenant } = await import('../src/db.ts');
+const { pExec, queryOne, setDefaultTenant, closeDatabases } = await import('../src/db.ts');
 const { provisionCompany } = await import('../src/provisioning.ts');
 const { hashPassword } = await import('../src/http.ts');
 const { newId } = await import('../src/ids.ts');
@@ -63,7 +57,7 @@ before(async () => {
   const started = await startServer(0, '127.0.0.1');
   baseUrl = started.url;
   server = started.server as never;
-  const provisioned = provisionCompany({
+  const provisioned = await provisionCompany({
     ruc: '1792456789001',
     name: 'EMPRESA TEST S.A.',
     tradeName: 'EMPRESA TEST',
@@ -79,22 +73,18 @@ before(async () => {
   });
   companyId = provisioned.company.id;
   setDefaultTenant(companyId);
-  ids.warehouseId = String(queryOne<{ id: string }>("SELECT id FROM warehouses WHERE code = 'BOD01'")!.id);
+  ids.warehouseId = String((await queryOne<{ id: string }>("SELECT id FROM warehouses WHERE code = 'BOD01'"))!.id);
   // Superadministrador de la plataforma (usuario global).
   const now = new Date().toISOString();
-  pExec(
+  await pExec(
     'INSERT INTO platform_users (id, company_id, username, password_hash, name, email, role, permissions, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     [newId(), null, 'superadmin', hashPassword('superadmin123'), 'Superadministrador', 'superadmin@test.ec', 'superadmin', '[]', 'active', now, now],
   );
 });
 
-after(() => {
+after(async () => {
   server?.close(() => undefined);
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
+  await closeDatabases();
 });
 
 test('clave de acceso: 49 dígitos y módulo 11 válido', () => {

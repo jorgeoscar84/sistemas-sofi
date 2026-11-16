@@ -36,8 +36,8 @@ export function buildRouter(): Router {
   return router;
 }
 
-export function startServer(port = config.port, host = config.host) {
-  initDb();
+export async function startServer(port = config.port, host = config.host) {
+  await initDb();
   const server = createServer(buildRouter());
   return new Promise<{ server: import('node:http').Server; url: string }>((resolve) => {
     server.listen(port, host, () => {
@@ -57,8 +57,8 @@ if (isMainModule) {
       const seedDemo = process.env.SEED_DEMO !== 'false';
       console.log(`\n  Facturación Electrónica EC · Plataforma multiempresa`);
       console.log(`  API + Web:        ${url}`);
-      console.log(`  Plataforma:       ${config.platformDbPath}`);
-      console.log(`  Empresas:         ${config.tenantsDir}/*.db`);
+      console.log(`  Base de datos:    ${config.dbDriver === 'pglite' ? 'PGlite (pruebas)' : 'PostgreSQL'}`);
+      console.log(`  Schemas:          ${config.dbSchemaPrefix}<empresa>`);
       console.log(`  Superadmin:       ${process.env.SUPERADMIN_USERNAME || 'superadmin'}`);
       if (seedDemo) {
         console.log(`  Empresa demo:     admin / admin123 (COMERCIAL DEMO S.A.)\n`);

@@ -1,14 +1,15 @@
 #!/bin/sh
-# Entrypoint de producción: inicializa la plataforma la primera vez y arranca el servidor.
+# Entrypoint de producción: migra SQLite una sola vez (si se solicita),
+# garantiza el superadministrador inicial y arranca el servidor.
 set -eu
 
-PLATFORM_FILE="${PLATFORM_DB_PATH:-/app/data/platform.db}"
-
-if [ ! -f "$PLATFORM_FILE" ]; then
-  echo "[entrypoint] Primera ejecución: inicializando plataforma..."
-  node apps/api/src/seed.ts
-else
-  echo "[entrypoint] Base de plataforma encontrada en $PLATFORM_FILE"
+if [ "${MIGRATE_SQLITE:-false}" = "true" ]; then
+  echo "[entrypoint] Migrando datos desde SQLite a PostgreSQL..."
+  node scripts/migrate-sqlite-to-postgres.mjs
 fi
+
+# Idempotente: si ya existen usuarios de plataforma, no hace nada.
+echo "[entrypoint] Verificando plataforma..."
+node apps/api/src/seed.ts
 
 exec node apps/api/src/server.ts

@@ -15,6 +15,11 @@ export const config = {
   host: env('HOST', '127.0.0.1'),
   jwtSecret: env('JWT_SECRET', 'facturacion-ec-dev-secret-cambiar-en-produccion'),
   jwtExpiresInSeconds: Number(env('JWT_EXPIRES_IN_SECONDS', String(7 * 24 * 3600))),
+  /** PostgreSQL: `postgres` (producción) o `pglite` (pruebas locales). */
+  dbDriver: env('DB_DRIVER', 'postgres'),
+  databaseUrl: env('DATABASE_URL', ''),
+  dbSchemaPrefix: env('DB_SCHEMA_PREFIX', 'tenant_'),
+  dbPoolMax: Number(env('DB_POOL_MAX', '10')),
   /** Base anterior (monoempresa); se conserva para migración/respaldo. */
   dbPath: env('DB_PATH', path.join(root, 'data', 'facturacion.db')),
   /** Base de la plataforma: usuarios globales, licencias y tokens. */

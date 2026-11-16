@@ -6,7 +6,11 @@
  *
  * Uso:
  *   node apps/api/src/seed.ts            (crea la plataforma si está vacía)
- *   node apps/api/src/seed.ts --force    (elimina bases de datos y vuelve a sembrar)
+ *   node apps/api/src/seed.ts --force    (elimina schemas y vuelve a sembrar)
+ *
+ * La capa `db.ts` es PostgreSQL async (PGlite en pruebas): todas las consultas
+ * se esperan con `await` y el contexto de empresa se propaga con
+ * `runWithTenantAsync`.
  */
 
 import { hashPassword } from './http.ts';
@@ -18,7 +22,7 @@ import {
   pOne,
   pExec,
   removeAllDatabases,
-  runWithTenant,
+  runWithTenantAsync,
   queryOne,
 } from './db.ts';
 import { newId } from './ids.ts';
@@ -35,17 +39,17 @@ function sriDate(date: Date): string {
   return `${day}/${month}/${date.getFullYear()}`;
 }
 
-function createPlatformUser(input: {
+async function createPlatformUser(input: {
   username: string;
   password: string;
   name: string;
   email?: string;
   role: string;
   companyId?: string | null;
-}): string {
+}): Promise<string> {
   const id = newId();
   const now = nowIso();
-  pExec(
+  await pExec(
     `INSERT INTO platform_users (id, company_id, username, password_hash, name, email, role, permissions, status, created_at, updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
     [
@@ -65,14 +69,14 @@ function createPlatformUser(input: {
   return id;
 }
 
-function seedTenantData(adminId: string): void {
-  const company = getCompany();
+async function seedTenantData(adminId: string): Promise<void> {
+  const company = await getCompany();
 
   /* ---------------------------------------------------------- bodegas */
-  let warehouse = queryOne<Record<string, unknown>>('SELECT * FROM warehouses ORDER BY code ASC LIMIT 1');
+  let warehouse = await queryOne<Record<string, unknown>>('SELECT * FROM warehouses ORDER BY code ASC LIMIT 1');
   if (!warehouse) {
     const id = newId();
-    execute('INSERT INTO warehouses (id, code, name, description, color, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)', [
+    await execute('INSERT INTO warehouses (id, code, name, description, color, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)', [
       id,
       'BOD01',
       'Bodega principal',
@@ -82,12 +86,12 @@ function seedTenantData(adminId: string): void {
       nowIso(),
       nowIso(),
     ]);
-    warehouse = queryOne<Record<string, unknown>>('SELECT * FROM warehouses WHERE id = ?', [id])!;
+    warehouse = (await queryOne<Record<string, unknown>>('SELECT * FROM warehouses WHERE id = ?', [id]))!;
   }
-  let secondWarehouse = queryOne<Record<string, unknown>>("SELECT * FROM warehouses WHERE code = 'BOD02'");
+  let secondWarehouse = await queryOne<Record<string, unknown>>("SELECT * FROM warehouses WHERE code = 'BOD02'");
   if (!secondWarehouse) {
     const id = newId();
-    execute('INSERT INTO warehouses (id, code, name, description, color, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)', [
+    await execute('INSERT INTO warehouses (id, code, name, description, color, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)', [
       id,
       'BOD02',
       'Bodega secundaria',
@@ -97,12 +101,12 @@ function seedTenantData(adminId: string): void {
       nowIso(),
       nowIso(),
     ]);
-    secondWarehouse = queryOne<Record<string, unknown>>('SELECT * FROM warehouses WHERE id = ?', [id])!;
+    secondWarehouse = (await queryOne<Record<string, unknown>>('SELECT * FROM warehouses WHERE id = ?', [id]))!;
   }
 
   /* --------------------------------------------- unidades y categorías */
-  const unitRow = queryOne<Record<string, unknown>>('SELECT * FROM units ORDER BY code ASC LIMIT 1');
-  const categoryRow = queryOne<Record<string, unknown>>('SELECT * FROM categories ORDER BY name ASC LIMIT 1');
+  const unitRow = await queryOne<Record<string, unknown>>('SELECT * FROM units ORDER BY code ASC LIMIT 1');
+  const categoryRow = await queryOne<Record<string, unknown>>('SELECT * FROM categories ORDER BY name ASC LIMIT 1');
   const unitId = unitRow ? String(unitRow.id) : null;
   const categoryId = categoryRow ? String(categoryRow.id) : null;
 
@@ -128,8 +132,8 @@ function seedTenantData(adminId: string): void {
     { type: 'service', code: 'S003', description: 'Mantenimiento preventivo de equipos', priceCents: 8000, costCents: 0, ivaCode: '4', trackStock: false, minStock: 0 },
   ];
   for (const product of products) {
-    if (queryOne('SELECT id FROM products WHERE type = ? AND code = ?', [product.type, product.code])) continue;
-    execute(
+    if (await queryOne('SELECT id FROM products WHERE type = ? AND code = ?', [product.type, product.code])) continue;
+    await execute(
       `INSERT INTO products (id, type, code, aux_code, description, category_id, unit_id, price_cents, cost_cents,
         iva_code, ice_code, irbpnr_code, status, track_stock, min_stock, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -163,21 +167,24 @@ function seedTenantData(adminId: string): void {
     { idType: '05', idNumber: '0926687856', name: 'Carlos Andrés Vera', email: 'carlos.vera@correo.ec', address: 'Guayaquil' },
   ];
   for (const client of clients) {
-    if (queryOne('SELECT id FROM clients WHERE id_type = ? AND id_number = ?', [client.idType, client.idNumber])) continue;
-    execute(
+    if (await queryOne('SELECT id FROM clients WHERE id_type = ? AND id_number = ?', [client.idType, client.idNumber])) continue;
+    await execute(
       'INSERT INTO clients (id, id_type, id_number, name, email, phone, address, subject_type, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       [newId(), client.idType, client.idNumber, client.name, client.email, null, client.address, '01', 'active', nowIso(), nowIso()],
     );
   }
-  const consumidorFinal = ensureConsumidorFinal();
+  const consumidorFinal = await ensureConsumidorFinal();
 
   /* ----------------------------------------------------------- inventario */
-  const productRows = ['P001', 'P002', 'P003', 'P004', 'P005', 'P006'].map((code) =>
-    queryOne<{ id: string; cost_cents: number }>('SELECT id, cost_cents FROM products WHERE code = ?', [code])!,
-  );
-  const stockExists = queryOne<{ total: number }>("SELECT COUNT(*) AS total FROM stock_vouchers WHERE type = 'income'");
+  const productRows: { id: string; cost_cents: number }[] = [];
+  for (const code of ['P001', 'P002', 'P003', 'P004', 'P005', 'P006']) {
+    productRows.push(
+      (await queryOne<{ id: string; cost_cents: number }>('SELECT id, cost_cents FROM products WHERE code = ?', [code]))!,
+    );
+  }
+  const stockExists = await queryOne<{ total: number }>("SELECT COUNT(*) AS total FROM stock_vouchers WHERE type = 'income'");
   if ((stockExists?.total ?? 0) === 0) {
-    createStockVoucher(
+    await createStockVoucher(
       {
         type: 'income',
         warehouseId: String(warehouse.id),
@@ -191,7 +198,7 @@ function seedTenantData(adminId: string): void {
       },
       null,
     );
-    createStockVoucher(
+    await createStockVoucher(
       {
         type: 'transfer',
         warehouseId: String(warehouse.id),
@@ -204,136 +211,135 @@ function seedTenantData(adminId: string): void {
   }
 
   /* -------------------------------------------------- comprobantes demo */
-  const voucherCount = queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM vouchers');
+  const voucherCount = await queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM vouchers');
   if ((voucherCount?.total ?? 0) > 0) return;
 
-  const clientRows = ['1752048122001', '1792146141001', '1710034065'].map((idNumber) =>
-    queryOne<{ id: string; name: string }>('SELECT id, name FROM clients WHERE id_number = ?', [idNumber])!,
+  const clientRows: { id: string; name: string }[] = [];
+  for (const idNumber of ['1752048122001', '1792146141001', '1710034065']) {
+    clientRows.push(
+      (await queryOne<{ id: string; name: string }>('SELECT id, name FROM clients WHERE id_number = ?', [idNumber]))!,
+    );
+  }
+
+  await createVoucher(
+    {
+      docType: '01',
+      clientId: clientRows[0]!.id,
+      source: 'standard',
+      items: [
+        { productId: productRows[0]!.id, quantity: 1 },
+        { productId: productRows[1]!.id, quantity: 2 },
+      ],
+      infoAdicional: [{ nombre: 'Orden de compra', valor: 'OC-2026-001' }],
+    },
+    adminId,
   );
-  const run = async () => {
-    await createVoucher(
-      {
-        docType: '01',
-        clientId: clientRows[0]!.id,
-        source: 'standard',
-        items: [
-          { productId: productRows[0]!.id, quantity: 1 },
-          { productId: productRows[1]!.id, quantity: 2 },
+  await createVoucher(
+    { docType: '01', clientId: clientRows[1]!.id, source: 'standard', items: [{ productId: productRows[3]!.id, quantity: 10 }] },
+    adminId,
+  );
+  await createVoucher(
+    { docType: '01', clientId: consumidorFinal.id, source: 'quick', items: [{ productId: productRows[4]!.id, quantity: 3 }] },
+    adminId,
+  );
+  await createVoucher(
+    { docType: '01', clientId: clientRows[2]!.id, source: 'standard', draft: true, items: [{ productId: productRows[2]!.id, quantity: 2 }] },
+    adminId,
+  );
+
+  // Guía de remisión de ejemplo
+  await createVoucher(
+    {
+      docType: '06',
+      clientId: clientRows[0]!.id,
+      source: 'waybill',
+      items: [{ productId: productRows[0]!.id, quantity: 2, unitPriceCents: 0, ivaCode: '0' }],
+      extra: {
+        dirPartida: 'Av. Amazonas N34-120 y Naciones Unidas, Quito (Bodega principal)',
+        transportista: {
+          razonSocial: 'TRANSPORTES ANDINOS S.A.',
+          ruc: company.ruc,
+          tipoIdentificacion: '04',
+          placa: 'PBX-1234',
+        },
+        fechaIniTransporte: sriDate(new Date()),
+        fechaFinTransporte: sriDate(new Date()),
+        destinatarios: [
+          {
+            identificacion: '1752048122001',
+            razonSocial: 'ALEJANDRO TES',
+            direccion: 'Av. 6 de Diciembre N24-56, Quito',
+            motivoTraslado: '03',
+            codDocSustento: '01',
+            numDocSustento: '001-001-000000001',
+            fechaEmisionDocSustento: sriDate(new Date()),
+            items: [{ codigo: 'P001', descripcion: 'Laptop Lenovo ThinkPad E14', cantidad: 2 }],
+          },
         ],
-        infoAdicional: [{ nombre: 'Orden de compra', valor: 'OC-2026-001' }],
       },
-      adminId,
-    );
-    await createVoucher(
-      { docType: '01', clientId: clientRows[1]!.id, source: 'standard', items: [{ productId: productRows[3]!.id, quantity: 10 }] },
-      adminId,
-    );
-    await createVoucher(
-      { docType: '01', clientId: consumidorFinal.id, source: 'quick', items: [{ productId: productRows[4]!.id, quantity: 3 }] },
-      adminId,
-    );
-    await createVoucher(
-      { docType: '01', clientId: clientRows[2]!.id, source: 'standard', draft: true, items: [{ productId: productRows[2]!.id, quantity: 2 }] },
-      adminId,
-    );
+    },
+    adminId,
+  );
 
-    // Guía de remisión de ejemplo
-    await createVoucher(
-      {
-        docType: '06',
-        clientId: clientRows[0]!.id,
-        source: 'waybill',
-        items: [{ productId: productRows[0]!.id, quantity: 2, unitPriceCents: 0, ivaCode: '0' }],
-        extra: {
-          dirPartida: 'Av. Amazonas N34-120 y Naciones Unidas, Quito (Bodega principal)',
-          transportista: {
-            razonSocial: 'TRANSPORTES ANDINOS S.A.',
-            ruc: company.ruc,
-            tipoIdentificacion: '04',
-            placa: 'PBX-1234',
-          },
-          fechaIniTransporte: sriDate(new Date()),
-          fechaFinTransporte: sriDate(new Date()),
-          destinatarios: [
-            {
-              identificacion: '1752048122001',
-              razonSocial: 'ALEJANDRO TES',
-              direccion: 'Av. 6 de Diciembre N24-56, Quito',
-              motivoTraslado: '03',
-              codDocSustento: '01',
-              numDocSustento: '001-001-000000001',
-              fechaEmisionDocSustento: sriDate(new Date()),
-              items: [{ codigo: 'P001', descripcion: 'Laptop Lenovo ThinkPad E14', cantidad: 2 }],
-            },
-          ],
+  // Comprobante de retención de ejemplo
+  await createVoucher(
+    {
+      docType: '07',
+      clientId: clientRows[1]!.id,
+      source: 'retention',
+      items: [],
+      extra: {
+        sujeto: {
+          tipoIdentificacion: '04',
+          identificacion: '1792146141001',
+          razonSocial: 'DISTRIBUIDORA ANDINA S.A.',
         },
-      },
-      adminId,
-    );
-
-    // Comprobante de retención de ejemplo
-    await createVoucher(
-      {
-        docType: '07',
-        clientId: clientRows[1]!.id,
-        source: 'retention',
-        items: [],
-        extra: {
-          sujeto: {
-            tipoIdentificacion: '04',
-            identificacion: '1792146141001',
-            razonSocial: 'DISTRIBUIDORA ANDINA S.A.',
+        periodoFiscal: '10/2026',
+        docs: [
+          {
+            codSustento: '01',
+            codDocSustento: '01',
+            numDocSustento: '001-001-000000007',
+            fechaEmisionDocSustento: '20/10/2026',
+            numAutDocSustento: '2010202601179214614100120010010000000071234567810',
+            pagoLocExt: '01',
+            totalSinImpuestosCents: 45000,
+            importeTotalCents: 51750,
+            impuestos: [
+              {
+                codImpuestoDocSustento: '2',
+                codigoPorcentaje: '4',
+                baseImponibleCents: 45000,
+                tarifa: 15,
+                valorImpuestoCents: 6750,
+              },
+            ],
+            retenciones: [
+              { codigo: '1', etiqueta: 'Renta', codigoPorcentaje: '303', tarifa: 10, baseImponibleCents: 45000, valorRetenidoCents: 4500 },
+              { codigo: '2', etiqueta: 'IVA', codigoPorcentaje: '1', tarifa: 10, baseImponibleCents: 6750, valorRetenidoCents: 675 },
+            ],
           },
-          periodoFiscal: '10/2026',
-          docs: [
-            {
-              codSustento: '01',
-              codDocSustento: '01',
-              numDocSustento: '001-001-000000007',
-              fechaEmisionDocSustento: '20/10/2026',
-              numAutDocSustento: '2010202601179214614100120010010000000071234567810',
-              pagoLocExt: '01',
-              totalSinImpuestosCents: 45000,
-              importeTotalCents: 51750,
-              impuestos: [
-                {
-                  codImpuestoDocSustento: '2',
-                  codigoPorcentaje: '4',
-                  baseImponibleCents: 45000,
-                  tarifa: 15,
-                  valorImpuestoCents: 6750,
-                },
-              ],
-              retenciones: [
-                { codigo: '1', etiqueta: 'Renta', codigoPorcentaje: '303', tarifa: 10, baseImponibleCents: 45000, valorRetenidoCents: 4500 },
-                { codigo: '2', etiqueta: 'IVA', codigoPorcentaje: '1', tarifa: 10, baseImponibleCents: 6750, valorRetenidoCents: 675 },
-              ],
-            },
-          ],
-        },
+        ],
       },
-      adminId,
-    );
-    audit('seed', 'demo', 'created', 'Datos de demostración creados', adminId);
-  };
-  // createVoucher es async; el caller principal lo espera.
-  return run();
+    },
+    adminId,
+  );
+  await audit('seed', 'demo', 'created', 'Datos de demostración creados', adminId);
 }
 
 async function seed(): Promise<void> {
   const force = process.argv.includes('--force');
   if (force) {
-    removeAllDatabases();
-    console.log('Bases de datos eliminadas para volver a sembrar.');
+    await removeAllDatabases();
+    console.log('Schemas de datos eliminados para volver a sembrar.');
   }
-  initPlatformDb();
-  const existing = pOne<{ total: number }>('SELECT COUNT(*) AS total FROM platform_users');
+  await initPlatformDb();
+  const existing = await pOne<{ total: number }>('SELECT COUNT(*) AS total FROM platform_users');
   if ((existing?.total ?? 0) > 0 && !force) {
     console.log('La plataforma ya está inicializada. Use --force para reiniciar todo (borra datos).');
     return;
   }
-  console.log(`Sembrando plataforma en ${config.platformDbPath}`);
-  console.log(`Bases de empresas en ${config.tenantsDir}`);
+  console.log(`Sembrando plataforma multiempresa (driver: ${config.dbDriver}, prefijo de schemas: ${config.dbSchemaPrefix})`);
 
   const seedDemo = process.env.SEED_DEMO !== 'false';
   const superUsername = (process.env.SUPERADMIN_USERNAME || 'superadmin').trim() || 'superadmin';
@@ -348,7 +354,7 @@ async function seed(): Promise<void> {
   }
 
   /* ------------------------------------------------- superadministrador */
-  createPlatformUser({
+  await createPlatformUser({
     username: superUsername,
     password: superPassword,
     name: 'Superadministrador de la plataforma',
@@ -358,7 +364,7 @@ async function seed(): Promise<void> {
 
   if (seedDemo) {
     /* ----------------------------------------------------- empresa demo */
-    const demo = provisionCompany({
+    const demo = await provisionCompany({
       ruc: '1792456789001',
       name: 'COMERCIAL DEMO S.A.',
       tradeName: 'COMERCIAL DEMO',
@@ -376,14 +382,14 @@ async function seed(): Promise<void> {
     });
     const companyId = demo.company.id;
 
-    addCompanyUser(companyId, { username: 'facturador', password: 'facturador123', name: 'Ana Facturadora', email: 'facturador@demo.ec', role: 'facturador' });
-    addCompanyUser(companyId, { username: 'inventario', password: 'inventario123', name: 'Iván Inventario', email: 'inventario@demo.ec', role: 'inventario' });
-    addCompanyUser(companyId, { username: 'contador', password: 'contador123', name: 'Carla Contadora', email: 'contador@demo.ec', role: 'contador' });
+    await addCompanyUser(companyId, { username: 'facturador', password: 'facturador123', name: 'Ana Facturadora', email: 'facturador@demo.ec', role: 'facturador' });
+    await addCompanyUser(companyId, { username: 'inventario', password: 'inventario123', name: 'Iván Inventario', email: 'inventario@demo.ec', role: 'inventario' });
+    await addCompanyUser(companyId, { username: 'contador', password: 'contador123', name: 'Carla Contadora', email: 'contador@demo.ec', role: 'contador' });
 
-    await runWithTenant(companyId, () => seedTenantData(demo.admin.id));
+    await runWithTenantAsync(companyId, () => seedTenantData(demo.admin.id));
 
     /* ------------------------------------------------- segunda empresa demo */
-    const second = provisionCompany({
+    const second = await provisionCompany({
       ruc: '0999999999001',
       name: 'DISTRIBUIDORA DEL PACÍFICO S.A.',
       tradeName: 'DISPA',

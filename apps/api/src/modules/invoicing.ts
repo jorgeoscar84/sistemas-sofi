@@ -178,15 +178,15 @@ function voucherNumber(row: VoucherRow): string {
   return `${row.establishment_code}-${row.emission_point_code}-${row.sequential || '000000000'}`;
 }
 
-export function voucherDto(row: VoucherRow, includeChildren = true) {
+export async function voucherDto(row: VoucherRow, includeChildren = true) {
   const items = includeChildren
-    ? queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ? ORDER BY rowid ASC', [row.id])
+    ? await queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ? ORDER BY ctid ASC', [row.id])
     : [];
   const payments = includeChildren
-    ? queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ? ORDER BY rowid ASC', [row.id])
+    ? await queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ? ORDER BY ctid ASC', [row.id])
     : [];
   const related = row.related_voucher_id
-    ? queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [row.related_voucher_id])
+    ? await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [row.related_voucher_id])
     : undefined;
   return {
     id: row.id,
@@ -242,7 +242,7 @@ export function voucherDto(row: VoucherRow, includeChildren = true) {
       amountCents: payment.amount_cents,
       term: payment.term,
     })),
-    movements: includeChildren ? auditList('vouchers', row.id) : [],
+    movements: includeChildren ? await auditList('vouchers', row.id) : [],
   };
 }
 
@@ -294,17 +294,17 @@ function sriPaymentCode(method: string): string {
 
 /* ------------------------------------------------------------- numeración */
 
-function reserveSequential(emissionPointId: string, docType: string, dateIso: string) {
+async function reserveSequential(emissionPointId: string, docType: string, dateIso: string) {
   const field = SEQUENCE_FIELD[docType] ?? 'seq_invoice';
-  const point = queryOne<Record<string, unknown>>('SELECT * FROM emission_points WHERE id = ?', [emissionPointId]);
+  const point = await queryOne<Record<string, unknown>>('SELECT * FROM emission_points WHERE id = ?', [emissionPointId]);
   if (!point) throw ApiError.badRequest('Punto de emisión no encontrado');
-  const establishment = queryOne<Record<string, unknown>>('SELECT * FROM establishments WHERE id = ?', [
+  const establishment = await queryOne<Record<string, unknown>>('SELECT * FROM establishments WHERE id = ?', [
     point.establishment_id,
   ]);
   if (!establishment) throw ApiError.badRequest('Establecimiento no encontrado');
-  const company = getCompany();
+  const company = await getCompany();
   const sequential = Number(point[field] ?? 1) || 1;
-  execute(`UPDATE emission_points SET ${field} = ? , updated_at = ? WHERE id = ?`, [sequential + 1, nowIso(), emissionPointId]);
+  await execute(`UPDATE emission_points SET ${field} = ? , updated_at = ? WHERE id = ?`, [sequential + 1, nowIso(), emissionPointId]);
   const accessKey = buildClaveAcceso({
     fechaEmision: new Date(dateIso),
     codDoc: docType,
@@ -363,7 +363,7 @@ export interface CreateVoucherResult {
 }
 
 export async function createVoucher(input: CreateVoucherInput, userId: string | null): Promise<CreateVoucherResult> {
-  const company = getCompany();
+  const company = await getCompany();
   const docType = input.docType ?? '01';
   if (!DOC_TYPES[docType as DocTypeCode]) throw ApiError.badRequest(`Tipo de comprobante inválido: ${docType}`);
   const isRetention = docType === '07';
@@ -384,7 +384,7 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
     }
   }
 
-  const establishments = getEstablishments();
+  const establishments = await getEstablishments();
   const establishment = input.establishmentId
     ? establishments.find((e) => e.id === input.establishmentId)
     : establishments[0];
@@ -394,15 +394,16 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
     : establishment.emissionPoints[0];
   if (!emissionPoint) throw ApiError.badRequest('No hay puntos de emisión configurados en el establecimiento');
 
-  const client = input.clientId ? findClient(input.clientId) : ensureConsumidorFinal();
+  const client = input.clientId ? await findClient(input.clientId) : await ensureConsumidorFinal();
   if (!client) throw ApiError.badRequest('Cliente no encontrado');
 
   const issueDate = input.issueDate ? new Date(input.issueDate) : new Date();
   if (Number.isNaN(issueDate.getTime())) throw ApiError.badRequest('Fecha de emisión inválida');
 
   // Construir líneas y calcular impuestos
-  const lines = input.items.map((item) => {
-    const product = item.productId ? findProduct(item.productId) : undefined;
+  const lines = await Promise.all(
+    input.items.map(async (item) => {
+      const product = item.productId ? await findProduct(item.productId) : undefined;
     if (item.productId && !product) throw ApiError.badRequest(`Producto no encontrado: ${item.productId}`);
     const quantity = Number(item.quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) throw ApiError.badRequest('La cantidad de cada ítem debe ser mayor a 0');
@@ -439,7 +440,8 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
       ivaCode,
       taxes,
     };
-  });
+    }),
+  );
 
   let subtotalCents = lines.reduce((sum, line) => sum + line.subtotal, 0);
   let discountCents = lines.reduce((sum, line) => sum + line.discount, 0);
@@ -490,21 +492,21 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
   const changeCents = Math.max(0, paid - totalCents);
 
   const related = input.relatedVoucherId
-    ? queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [input.relatedVoucherId])
+    ? await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [input.relatedVoucherId])
     : undefined;
   if (input.relatedVoucherId && !related) throw ApiError.badRequest('Comprobante relacionado no encontrado');
 
   // Validar stock antes de reservar el secuencial y crear el comprobante:
   // un rechazo por inventario no debe consumir numeración ni dejar facturas emitidas.
   if (!draft && docType === '01') {
-    assertStockForSale(
+    await assertStockForSale(
       lines
         .filter((line) => line.productId)
         .map((line) => ({ productId: String(line.productId), quantity: line.quantity })),
     );
   }
 
-  const result = transaction(() => {
+  const result = await transaction(async () => {
     const id = newId();
     const now = nowIso();
     let sequential = '';
@@ -513,14 +515,14 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
     let emissionPointCode = emissionPoint.code;
     let environment = company.environment;
     if (!draft) {
-      const reserved = reserveSequential(emissionPoint.id, docType, issueDate.toISOString());
+      const reserved = await reserveSequential(emissionPoint.id, docType, issueDate.toISOString());
       sequential = reserved.sequential;
       accessKey = reserved.accessKey;
       establishmentCode = reserved.establishmentCode;
       emissionPointCode = reserved.emissionPointCode;
       environment = reserved.environment;
     }
-    execute(
+    await execute(
       `INSERT INTO vouchers (id, doc_type, status, environment, establishment_id, establishment_code, emission_point_id,
         emission_point_code, sequential, access_key, issue_date, client_id, client_id_type, client_id_number, client_name,
         subtotal_cents, discount_cents, tax_cents, total_cents, currency, source, info_adicional, sri_messages,
@@ -559,7 +561,7 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
       ],
     );
     for (const line of lines) {
-      execute(
+      await execute(
         `INSERT INTO voucher_items (id, voucher_id, product_id, code, aux_code, description, quantity, unit_price_cents,
           discount_cents, subtotal_cents, tax_cents, total_cents, iva_code, taxes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
@@ -581,7 +583,7 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
       );
     }
     for (const payment of payments) {
-      execute('INSERT INTO voucher_payments (id, voucher_id, method, amount_cents, term) VALUES (?,?,?,?,?)', [
+      await execute('INSERT INTO voucher_payments (id, voucher_id, method, amount_cents, term) VALUES (?,?,?,?,?)', [
         newId(),
         id,
         payment.method,
@@ -589,11 +591,11 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
         payment.term,
       ]);
     }
-    audit('vouchers', id, 'created', draft ? 'Borrador creado' : 'Comprobante creado', userId);
+    await audit('vouchers', id, 'created', draft ? 'Borrador creado' : 'Comprobante creado', userId);
     return id;
   });
 
-  const row = queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [result])!;
+  const row = (await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [result]))!;
   let finalRow = row;
   if (!draft) {
     finalRow = await emitVoucher(result, userId);
@@ -603,15 +605,15 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
 
 /* ------------------------------------------------------------------ emisión */
 
-function buildXmlForVoucher(row: VoucherRow, items: VoucherItemRow[], payments: PaymentRow[]): string {
-  const company = getCompany();
+async function buildXmlForVoucher(row: VoucherRow, items: VoucherItemRow[], payments: PaymentRow[]): Promise<string> {
+  const company = await getCompany();
   const establishment = row.establishment_id
-    ? queryOne<Record<string, unknown>>('SELECT * FROM establishments WHERE id = ?', [row.establishment_id])
+    ? await queryOne<Record<string, unknown>>('SELECT * FROM establishments WHERE id = ?', [row.establishment_id])
     : undefined;
   const point = row.emission_point_id
-    ? queryOne<Record<string, unknown>>('SELECT * FROM emission_points WHERE id = ?', [row.emission_point_id])
+    ? await queryOne<Record<string, unknown>>('SELECT * FROM emission_points WHERE id = ?', [row.emission_point_id])
     : undefined;
-  const client = row.client_id ? findClient(row.client_id) : undefined;
+  const client = row.client_id ? await findClient(row.client_id) : undefined;
   const infoTributaria = {
     ambiente: (row.environment === 2 ? '2' : '1') as '1' | '2',
     tipoEmision: '1' as const,
@@ -674,7 +676,7 @@ function buildXmlForVoucher(row: VoucherRow, items: VoucherItemRow[], payments: 
   }
 
   const related = row.related_voucher_id
-    ? queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [row.related_voucher_id])
+    ? await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [row.related_voucher_id])
     : undefined;
   if (row.doc_type === '04') {
     const input: NotaCreditoInput = {
@@ -847,7 +849,7 @@ interface EmissionOutcome {
 }
 
 /** Registra la interacción con el SRI para auditoría y soporte. */
-function logSriTransaction(
+async function logSriTransaction(
   voucherId: string,
   stage: string,
   environment: number,
@@ -855,8 +857,8 @@ function logSriTransaction(
   responseXml: string | undefined,
   error: string | undefined,
   requestSummary?: string,
-): void {
-  execute(
+): Promise<void> {
+  await execute(
     `INSERT INTO sri_transactions (id, voucher_id, stage, environment, http_status, request_summary, response_xml, error, created_at)
      VALUES (?,?,?,?,?,?,?,?,?)`,
     [
@@ -874,7 +876,7 @@ function logSriTransaction(
 }
 
 async function emitToSri(row: VoucherRow, xml: string): Promise<EmissionOutcome> {
-  const company = getCompany();
+  const company = await getCompany();
   const mode = company.sri_mode;
   if (mode === 'mock') {
     const mock = createMockSriClient();
@@ -921,8 +923,8 @@ async function emitToSri(row: VoucherRow, xml: string): Promise<EmissionOutcome>
     // Guardarraíl: nunca enviar al SRI un XML cuya firma no se valide localmente.
     const verification = verifySignedXml(signed.xml);
     if (!verification.valid) {
-      execute('UPDATE vouchers SET xml_signed = ?, updated_at = ? WHERE id = ?', [signed.xml, nowIso(), row.id]);
-      logSriTransaction(row.id, 'local-verification', row.environment, undefined, undefined, verification.details.join('; '));
+      await execute('UPDATE vouchers SET xml_signed = ?, updated_at = ? WHERE id = ?', [signed.xml, nowIso(), row.id]);
+      await logSriTransaction(row.id, 'local-verification', row.environment, undefined, undefined, verification.details.join('; '));
       return {
         status: 'failed',
         xmlSigned: signed.xml,
@@ -939,7 +941,7 @@ async function emitToSri(row: VoucherRow, xml: string): Promise<EmissionOutcome>
     }
     const ambiente = row.environment === 2 ? 2 : 1;
     const reception = await sendRecepcion(signed.xml, ambiente);
-    logSriTransaction(
+    await logSriTransaction(
       row.id,
       'recepcion',
       ambiente,
@@ -969,7 +971,7 @@ async function emitToSri(row: VoucherRow, xml: string): Promise<EmissionOutcome>
       await new Promise((resolve) => setTimeout(resolve, 1500));
       authorization = await consultarAutorizacion(row.access_key ?? '', ambiente);
     }
-    logSriTransaction(
+    await logSriTransaction(
       row.id,
       'autorizacion',
       ambiente,
@@ -1004,8 +1006,8 @@ async function emitToSri(row: VoucherRow, xml: string): Promise<EmissionOutcome>
   const baseUrl = (company.upconta_base_url ?? 'https://api.upconta.com').replace(/\/$/, '');
   const token = company.upconta_token;
   if (!token) throw ApiError.badRequest('No hay token de integración de UpConta configurado');
-  const items = queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [row.id]);
-  const payments = queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [row.id]);
+  const items = await queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [row.id]);
+  const payments = await queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [row.id]);
   const body = {
     client: row.client_id,
     infoTributaria: { estab: company.upconta_estab ?? row.establishment_code, ptoEmi: company.upconta_pto_emi ?? row.emission_point_code },
@@ -1058,7 +1060,7 @@ async function emitToSri(row: VoucherRow, xml: string): Promise<EmissionOutcome>
 
 /** Emite un comprobante (mock, SRI directo o UpConta) y actualiza stock al autorizar. */
 export async function emitVoucher(voucherId: string, userId: string | null): Promise<VoucherRow> {
-  let row = queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [voucherId]);
+  let row = await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [voucherId]);
   if (!row) throw ApiError.notFound('Comprobante no encontrado');
   if (['issued', 'canceled'].includes(row.status)) {
     throw ApiError.badRequest(`El comprobante ya está ${row.status === 'issued' ? 'autorizado' : 'anulado'}`);
@@ -1066,14 +1068,14 @@ export async function emitVoucher(voucherId: string, userId: string | null): Pro
   if (!row.access_key || !row.sequential) {
     throw ApiError.badRequest('El comprobante no tiene secuencial/clave de acceso asignados');
   }
-  const items = queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [voucherId]);
-  const payments = queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [voucherId]);
-  const company = getCompany();
+  const items = await queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [voucherId]);
+  const payments = await queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [voucherId]);
+  const company = await getCompany();
 
   void company;
   let xml: string;
   try {
-    xml = buildXmlForVoucher(row, items, payments);
+    xml = await buildXmlForVoucher(row, items, payments);
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;
@@ -1083,7 +1085,7 @@ export async function emitVoucher(voucherId: string, userId: string | null): Pro
 
   const outcome = await emitToSri(row, xml);
   const authorizedXml = outcome.status === 'issued' ? outcome.authorizedXml ?? outcome.xmlSigned : null;
-  execute(
+  await execute(
     'UPDATE vouchers SET status=?, authorization_number=?, authorization_date=?, xml_signed=?, xml_authorized=?, sri_messages=?, updated_at=? WHERE id=?',
     [
       outcome.status,
@@ -1096,7 +1098,7 @@ export async function emitVoucher(voucherId: string, userId: string | null): Pro
       row.id,
     ],
   );
-  audit(
+  await audit(
     'vouchers',
     row.id,
     outcome.status === 'issued' ? 'authorized' : outcome.status,
@@ -1109,15 +1111,15 @@ export async function emitVoucher(voucherId: string, userId: string | null): Pro
     const saleItems = items
       .filter((item) => item.product_id)
       .map((item) => ({ productId: String(item.product_id), quantity: Number(item.quantity) }));
-    if (saleItems.length) applySaleMovements(row.id, row.access_key ?? row.id, row.issue_date, saleItems, userId);
+    if (saleItems.length) await applySaleMovements(row.id, row.access_key ?? row.id, row.issue_date, saleItems, userId);
   }
-  return queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [row.id])!;
+  return await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [row.id])!;
 }
 
 /* ---------------------------------------------------------------- rutas */
 
-function getVoucherOrThrow(id: string): VoucherRow {
-  const row = queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [id]);
+async function getVoucherOrThrow(id: string): Promise<VoucherRow> {
+  const row = await queryOne<VoucherRow>('SELECT * FROM vouchers WHERE id = ?', [id]);
   if (!row) throw ApiError.notFound('Comprobante no encontrado');
   return row;
 }
@@ -1127,7 +1129,7 @@ function docTypeOptions() {
 }
 
 /** Listado paginado de comprobantes filtrado por tipo de documento. */
-function listVouchersByDocType(ctx: Parameters<typeof requireUser>[0], docType: string) {
+async function listVouchersByDocType(ctx: Parameters<typeof requireUser>[0], docType: string) {
   const { page, limit, offset } = pageParams(ctx.query);
   const where: string[] = ['doc_type = ?'];
   const params: unknown[] = [docType];
@@ -1152,22 +1154,23 @@ function listVouchersByDocType(ctx: Parameters<typeof requireUser>[0], docType: 
     params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
   }
   const clause = `WHERE ${where.join(' AND ')}`;
-  const total = queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM vouchers ${clause}`, params)?.total ?? 0;
-  const rows = queryAll<VoucherRow>(`SELECT * FROM vouchers ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [
+  const total = (await queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM vouchers ${clause}`, params))?.total ?? 0;
+  const rows = await queryAll<VoucherRow>(`SELECT * FROM vouchers ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [
     ...params,
     limit,
     offset,
   ]);
-  return paginated(rows.map((row) => voucherDto(row, false)), total, page, limit);
+  const data = await Promise.all(rows.map((row) => voucherDto(row, false)));
+  return paginated(data, total, page, limit);
 }
 
 export function registerInvoicingRoutes(router: Router): void {
-  router.get('/api/vouchers/options', 'invoicing:read', () => {
-    const establishments = getEstablishments();
-    const clients = queryAll<Record<string, unknown>>(
+  router.get('/api/vouchers/options', 'invoicing:read', async () => {
+    const establishments = await getEstablishments();
+    const clients = await queryAll<Record<string, unknown>>(
       "SELECT id, id_type, id_number, name FROM clients WHERE status = 'active' ORDER BY name ASC LIMIT 500",
     );
-    const products = queryAll<Record<string, unknown>>(
+    const products = await queryAll<Record<string, unknown>>(
       "SELECT id, type, code, description, price_cents, iva_code, track_stock FROM products WHERE status = 'active' ORDER BY description ASC LIMIT 500",
     );
     return {
@@ -1193,7 +1196,7 @@ export function registerInvoicingRoutes(router: Router): void {
     };
   });
 
-  router.get('/api/vouchers', 'invoicing:read', (ctx) => {
+  router.get('/api/vouchers', 'invoicing:read', async (ctx) => {
     const { page, limit, offset } = pageParams(ctx.query);
     const where: string[] = [];
     const params: unknown[] = [];
@@ -1228,56 +1231,57 @@ export function registerInvoicingRoutes(router: Router): void {
       params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const total = queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM vouchers ${clause}`, params)?.total ?? 0;
-    const rows = queryAll<VoucherRow>(`SELECT * FROM vouchers ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [
+    const total = (await queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM vouchers ${clause}`, params))?.total ?? 0;
+    const rows = await queryAll<VoucherRow>(`SELECT * FROM vouchers ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [
       ...params,
       limit,
       offset,
     ]);
-    return paginated(rows.map((row) => voucherDto(row, false)), total, page, limit);
+    const data = await Promise.all(rows.map((row) => voucherDto(row, false)));
+  return paginated(data, total, page, limit);
   });
 
-  router.get('/api/vouchers/:id', 'invoicing:read', (ctx) => voucherDto(getVoucherOrThrow(ctx.params.id)));
+  router.get('/api/vouchers/:id', 'invoicing:read', async (ctx) => await voucherDto(await getVoucherOrThrow(ctx.params.id)));
 
   router.post('/api/vouchers', 'invoicing:create', async (ctx) => {
     const auth = requireUser(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const created = await createVoucher(normalizeCreateInput(body), auth.id);
-    return voucherDto(created.voucher);
+    return await voucherDto(created.voucher);
   });
 
   router.post('/api/vouchers/:id/emit', 'invoicing:send', async (ctx) => {
     const auth = requireUser(ctx);
-    return voucherDto(await emitVoucher(ctx.params.id, auth.id));
+    return await voucherDto(await emitVoucher(ctx.params.id, auth.id));
   });
 
   router.post('/api/vouchers/:id/retry', 'invoicing:send', async (ctx) => {
     const auth = requireUser(ctx);
-    return voucherDto(await emitVoucher(ctx.params.id, auth.id));
+    return await voucherDto(await emitVoucher(ctx.params.id, auth.id));
   });
 
-  router.post('/api/vouchers/:id/cancel', 'invoicing:send', (ctx) => {
+  router.post('/api/vouchers/:id/cancel', 'invoicing:send', async (ctx) => {
     const auth = requireUser(ctx);
-    const row = getVoucherOrThrow(ctx.params.id);
+    const row = await getVoucherOrThrow(ctx.params.id);
     if (row.status === 'canceled') throw ApiError.badRequest('El comprobante ya está anulado');
-    execute("UPDATE vouchers SET status = 'canceled', updated_at = ? WHERE id = ?", [nowIso(), row.id]);
-    audit('vouchers', row.id, 'canceled', `Anulado por ${auth.name}`, auth.id);
-    return voucherDto(getVoucherOrThrow(row.id));
+    await execute("UPDATE vouchers SET status = 'canceled', updated_at = ? WHERE id = ?", [nowIso(), row.id]);
+    await audit('vouchers', row.id, 'canceled', `Anulado por ${auth.name}`, auth.id);
+    return await voucherDto(await getVoucherOrThrow(row.id));
   });
 
-  router.delete('/api/vouchers/:id', 'invoicing:create', (ctx) => {
-    const row = getVoucherOrThrow(ctx.params.id);
+  router.delete('/api/vouchers/:id', 'invoicing:create', async (ctx) => {
+    const row = await getVoucherOrThrow(ctx.params.id);
     if (!['draft', 'failed', 'offline'].includes(row.status)) {
       throw ApiError.badRequest('Solo se pueden eliminar comprobantes en borrador o rechazados');
     }
-    execute('DELETE FROM voucher_payments WHERE voucher_id = ?', [row.id]);
-    execute('DELETE FROM voucher_items WHERE voucher_id = ?', [row.id]);
-    execute('DELETE FROM vouchers WHERE id = ?', [row.id]);
+    await execute('DELETE FROM voucher_payments WHERE voucher_id = ?', [row.id]);
+    await execute('DELETE FROM voucher_items WHERE voucher_id = ?', [row.id]);
+    await execute('DELETE FROM vouchers WHERE id = ?', [row.id]);
     return { message: 'Comprobante eliminado' };
   });
 
-  router.get('/api/vouchers/:id/xml', 'invoicing:read', (ctx) => {
-    const row = getVoucherOrThrow(ctx.params.id);
+  router.get('/api/vouchers/:id/xml', 'invoicing:read', async (ctx) => {
+    const row = await getVoucherOrThrow(ctx.params.id);
     const requestedType = ctx.query.get('type') ?? '';
     const useSigned = requestedType === 'signed' || !row.xml_authorized;
     const content = useSigned ? row.xml_signed : row.xml_authorized;
@@ -1291,8 +1295,8 @@ export function registerInvoicingRoutes(router: Router): void {
   });
 
   /** Verificación local de la firma del XML guardado (soporte/diagnóstico). */
-  router.get('/api/vouchers/:id/signature-check', 'invoicing:read', (ctx) => {
-    const row = getVoucherOrThrow(ctx.params.id);
+  router.get('/api/vouchers/:id/signature-check', 'invoicing:read', async (ctx) => {
+    const row = await getVoucherOrThrow(ctx.params.id);
     if (!row.xml_signed) throw ApiError.badRequest('El comprobante no tiene XML firmado');
     const verification = verifySignedXml(row.xml_signed);
     return {
@@ -1311,20 +1315,20 @@ export function registerInvoicingRoutes(router: Router): void {
   /** Consulta manual de autorización al SRI (para estados `sent` u `offline`). */
   router.post('/api/vouchers/:id/check-authorization', 'invoicing:send', async (ctx) => {
     const auth = requireUser(ctx);
-    const row = getVoucherOrThrow(ctx.params.id);
-    const company = getCompany();
+    const row = await getVoucherOrThrow(ctx.params.id);
+    const company = await getCompany();
     if (company.sri_mode !== 'direct-sri') {
       throw ApiError.badRequest('La consulta de autorización requiere el modo direct-sri');
     }
     if (!row.access_key) throw ApiError.badRequest('El comprobante no tiene clave de acceso');
-    if (row.status === 'issued') return voucherDto(row);
+    if (row.status === 'issued') return await voucherDto(row);
     const ambiente = row.environment === 2 ? 2 : 1;
     let result = await consultarAutorizacion(row.access_key, ambiente);
     for (let attempt = 0; attempt < 2 && result.estado === 'PENDIENTE'; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       result = await consultarAutorizacion(row.access_key, ambiente);
     }
-    logSriTransaction(
+    await logSriTransaction(
       row.id,
       'consulta-autorizacion',
       ambiente,
@@ -1334,7 +1338,7 @@ export function registerInvoicingRoutes(router: Router): void {
       `POST ${SRI_ENDPOINTS[ambiente].autorizacion} · clave ${row.access_key}`,
     );
     if (result.estado === 'AUTORIZADO') {
-      execute(
+      await execute(
         "UPDATE vouchers SET status='issued', authorization_number=?, authorization_date=?, xml_authorized=?, sri_messages=?, updated_at=? WHERE id=?",
         [
           result.numeroAutorizacion ?? null,
@@ -1345,31 +1349,31 @@ export function registerInvoicingRoutes(router: Router): void {
           row.id,
         ],
       );
-      audit('vouchers', row.id, 'authorized', `Autorización confirmada por ${auth.name}`, auth.id);
+      await audit('vouchers', row.id, 'authorized', `Autorización confirmada por ${auth.name}`, auth.id);
       if (row.doc_type === '01' && row.status !== 'issued') {
         // El stock ya se descontó si la emisión había quedado en `sent`; no se repite.
       }
     } else if (result.estado === 'NO AUTORIZADO') {
-      execute("UPDATE vouchers SET status='failed', sri_messages=?, updated_at=? WHERE id=?", [
+      await execute("UPDATE vouchers SET status='failed', sri_messages=?, updated_at=? WHERE id=?", [
         JSON.stringify(result.mensajes ?? []),
         nowIso(),
         row.id,
       ]);
-      audit('vouchers', row.id, 'failed', `Rechazo del SRI al consultar autorización (${auth.name})`, auth.id);
+      await audit('vouchers', row.id, 'failed', `Rechazo del SRI al consultar autorización (${auth.name})`, auth.id);
     } else if (result.estado === 'ERROR' && row.status !== 'issued') {
-      execute("UPDATE vouchers SET status='offline', sri_messages=?, updated_at=? WHERE id=?", [
+      await execute("UPDATE vouchers SET status='offline', sri_messages=?, updated_at=? WHERE id=?", [
         JSON.stringify([{ identificador: 'RED', mensaje: result.error ?? 'No se pudo consultar el SRI', tipo: 'ERROR' }]),
         nowIso(),
         row.id,
       ]);
     }
-    return voucherDto(getVoucherOrThrow(row.id));
+    return await voucherDto(await getVoucherOrThrow(row.id));
   });
 
   /** Bitácora de las interacciones con el SRI (SOAP crudo). */
-  router.get('/api/vouchers/:id/sri-logs', 'invoicing:read', (ctx) => {
-    const row = getVoucherOrThrow(ctx.params.id);
-    const logs = queryAll<Record<string, unknown>>(
+  router.get('/api/vouchers/:id/sri-logs', 'invoicing:read', async (ctx) => {
+    const row = await getVoucherOrThrow(ctx.params.id);
+    const logs = await queryAll<Record<string, unknown>>(
       'SELECT id, stage, environment, http_status, request_summary, response_xml, error, created_at FROM sri_transactions WHERE voucher_id = ? ORDER BY created_at ASC',
       [row.id],
     );
@@ -1385,10 +1389,10 @@ export function registerInvoicingRoutes(router: Router): void {
     }));
   });
 
-  router.get('/api/vouchers/:id/pdf', 'invoicing:read', (ctx) => {
-    const row = getVoucherOrThrow(ctx.params.id);
+  router.get('/api/vouchers/:id/pdf', 'invoicing:read', async (ctx) => {
+    const row = await getVoucherOrThrow(ctx.params.id);
     return {
-      __file: buildRideBuffer(row),
+      __file: await buildRideBuffer(row),
       contentType: 'application/pdf',
       filename: `RIDE-${voucherNumber(row)}.pdf`,
     };
@@ -1396,9 +1400,9 @@ export function registerInvoicingRoutes(router: Router): void {
 
   router.post('/api/vouchers/:id/email', 'invoicing:read', async (ctx) => {
     const auth = requireUser(ctx);
-    const row = getVoucherOrThrow(ctx.params.id);
-    const client = row.client_id ? findClient(row.client_id) : undefined;
-    const company = getCompany();
+    const row = await getVoucherOrThrow(ctx.params.id);
+    const client = row.client_id ? await findClient(row.client_id) : undefined;
+    const company = await getCompany();
     if (!client?.email) {
       return { sent: false, to: null, reason: 'El cliente no tiene correo electrónico registrado.' };
     }
@@ -1425,13 +1429,13 @@ export function registerInvoicingRoutes(router: Router): void {
         subject,
         text,
         attachments: [
-          { filename: `${number}.pdf`, contentType: 'application/pdf', content: buildRideBuffer(row) },
+          { filename: `${number}.pdf`, contentType: 'application/pdf', content: await buildRideBuffer(row) },
           ...(xml
             ? [{ filename: `${number}.xml`, contentType: 'application/xml', content: Buffer.from(xml, 'utf8') }]
             : []),
         ],
       });
-      audit('vouchers', row.id, 'email', `Factura enviada a ${client.email}`, auth.id);
+      await audit('vouchers', row.id, 'email', `Factura enviada a ${client.email}`, auth.id);
       return { sent: true, to: client.email, subject };
     } catch (error) {
       return {
@@ -1444,12 +1448,12 @@ export function registerInvoicingRoutes(router: Router): void {
 
   router.post('/api/vouchers/:id/credit-note', 'invoicing:create', async (ctx) => {
     const auth = requireUser(ctx);
-    const original = getVoucherOrThrow(ctx.params.id);
+    const original = await getVoucherOrThrow(ctx.params.id);
     if (original.doc_type !== '01') throw ApiError.badRequest('Solo se pueden emitir notas de crédito sobre facturas');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const items = (Array.isArray(body.items) && body.items.length
       ? (body.items as Record<string, unknown>[])
-      : queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [original.id]).map((item) => ({
+      : (await queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [original.id])).map((item) => ({
           productId: item.product_id,
           quantity: Number(item.quantity),
           unitPriceCents: item.unit_price_cents,
@@ -1480,12 +1484,12 @@ export function registerInvoicingRoutes(router: Router): void {
       },
       auth.id,
     );
-    return voucherDto(result.voucher);
+    return await voucherDto(result.voucher);
   });
 
   router.post('/api/vouchers/:id/debit-note', 'invoicing:create', async (ctx) => {
     const auth = requireUser(ctx);
-    const original = getVoucherOrThrow(ctx.params.id);
+    const original = await getVoucherOrThrow(ctx.params.id);
     if (original.doc_type !== '01') throw ApiError.badRequest('Solo se pueden emitir notas de débito sobre facturas');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const items = Array.isArray(body.items) ? (body.items as Record<string, unknown>[]) : [];
@@ -1512,17 +1516,17 @@ export function registerInvoicingRoutes(router: Router): void {
       },
       auth.id,
     );
-    return voucherDto(result.voucher);
+    return await voucherDto(result.voucher);
   });
 
   /* ------------------------------------------- guías de remisión (doc 06) */
 
-  router.get('/api/waybills/options', 'invoicing:read', () => {
-    const establishments = getEstablishments();
-    const clients = queryAll<Record<string, unknown>>(
+  router.get('/api/waybills/options', 'invoicing:read', async () => {
+    const establishments = await getEstablishments();
+    const clients = await queryAll<Record<string, unknown>>(
       "SELECT id, id_type, id_number, name FROM clients WHERE status = 'active' ORDER BY name ASC LIMIT 500",
     );
-    const products = queryAll<Record<string, unknown>>(
+    const products = await queryAll<Record<string, unknown>>(
       "SELECT id, code, description, price_cents FROM products WHERE status = 'active' AND type = 'product' ORDER BY description ASC LIMIT 500",
     );
     return {
@@ -1550,7 +1554,7 @@ export function registerInvoicingRoutes(router: Router): void {
     };
   });
 
-  router.get('/api/waybills', 'invoicing:read', (ctx) => listVouchersByDocType(ctx, '06'));
+  router.get('/api/waybills', 'invoicing:read', async (ctx) => listVouchersByDocType(ctx, '06'));
 
   router.post('/api/waybills', 'invoicing:create', async (ctx) => {
     const auth = requireUser(ctx);
@@ -1568,7 +1572,7 @@ export function registerInvoicingRoutes(router: Router): void {
     }
     const inicio = str(body.fechaIniTransporte, 'fechaIniTransporte', { required: true });
     const fin = str(body.fechaFinTransporte, 'fechaFinTransporte', { required: true });
-    const normalizedDestinatarios = destinatarios.map((destinatario, index) => {
+    const normalizedDestinatarios = await Promise.all(destinatarios.map(async (destinatario, index) => {
       const items = Array.isArray(destinatario.items) ? (destinatario.items as Record<string, unknown>[]) : [];
       if (!items.length) {
         throw ApiError.badRequest(`El destinatario ${index + 1} no tiene bienes transportados`);
@@ -1582,19 +1586,19 @@ export function registerInvoicingRoutes(router: Router): void {
         numDocSustento: str(destinatario.numDocSustento, 'numDocSustento') || null,
         numAutDocSustento: str(destinatario.numAutDocSustento, 'numAutDocSustento') || null,
         fechaEmisionDocSustento: str(destinatario.fechaEmisionDocSustento, 'fechaEmisionDocSustento') || null,
-        items: items.map((item) => {
-          const product = item.productId ? findProduct(String(item.productId)) : undefined;
+        items: await Promise.all(items.map(async (item) => {
+          const product = item.productId ? await findProduct(String(item.productId)) : undefined;
           return {
             productId: product?.id ?? null,
             codigo: product ? product.code : str(item.codigo, 'item.codigo') || 'S/C',
             descripcion: product ? product.description : str(item.descripcion, 'item.descripcion', { required: true }),
             cantidad: Math.max(1, Number(item.cantidad ?? 1)),
           };
-        }),
+        })),
       };
-    });
+    }));
     const firstDestinatario = normalizedDestinatarios[0]!;
-    const client = ensureClient({
+    const client = await ensureClient({
       idNumber: firstDestinatario.identificacion,
       name: firstDestinatario.razonSocial,
     });
@@ -1633,14 +1637,14 @@ export function registerInvoicingRoutes(router: Router): void {
       },
       auth.id,
     );
-    return voucherDto(result.voucher);
+    return await voucherDto(result.voucher);
   });
 
   /* ------------------------------------------------- retenciones (doc 07) */
 
-  router.get('/api/retentions/options', 'invoicing:read', () => {
-    const establishments = getEstablishments();
-    const clients = queryAll<Record<string, unknown>>(
+  router.get('/api/retentions/options', 'invoicing:read', async () => {
+    const establishments = await getEstablishments();
+    const clients = await queryAll<Record<string, unknown>>(
       "SELECT id, id_type, id_number, name FROM clients WHERE status = 'active' ORDER BY name ASC LIMIT 500",
     );
     return {
@@ -1669,7 +1673,7 @@ export function registerInvoicingRoutes(router: Router): void {
     };
   });
 
-  router.get('/api/retentions', 'invoicing:read', (ctx) => listVouchersByDocType(ctx, '07'));
+  router.get('/api/retentions', 'invoicing:read', async (ctx) => listVouchersByDocType(ctx, '07'));
 
   router.post('/api/retentions', 'invoicing:create', async (ctx) => {
     const auth = requireUser(ctx);
@@ -1730,7 +1734,7 @@ export function registerInvoicingRoutes(router: Router): void {
         totalRetenidoCents: totalRetenido,
       };
     });
-    const client = ensureClient({
+    const client = await ensureClient({
       idType: str(sujeto.tipoIdentificacion, 'sujeto.tipoIdentificacion') || undefined,
       idNumber: str(sujeto.identificacion, 'sujeto.identificacion', { required: true }),
       name: str(sujeto.razonSocial, 'sujeto.razonSocial', { required: true }),
@@ -1757,7 +1761,7 @@ export function registerInvoicingRoutes(router: Router): void {
       },
       auth.id,
     );
-    return voucherDto(result.voucher);
+    return await voucherDto(result.voucher);
   });
 
   router.post('/api/quick-invoices', 'invoicing:create', async (ctx) => {
@@ -1787,7 +1791,7 @@ export function registerInvoicingRoutes(router: Router): void {
       },
       auth.id,
     );
-    return { voucher: voucherDto(result.voucher), changeCents: result.changeCents };
+    return { voucher: await voucherDto(result.voucher), changeCents: result.changeCents };
   });
 
   router.post('/api/pos/sales', 'invoicing:create', async (ctx) => {
@@ -1815,7 +1819,7 @@ export function registerInvoicingRoutes(router: Router): void {
       },
       auth.id,
     );
-    return { voucher: voucherDto(result.voucher), changeCents: result.changeCents };
+    return { voucher: await voucherDto(result.voucher), changeCents: result.changeCents };
   });
 
   /* ---------------------------------------------- API de integración (v1) */
@@ -1823,7 +1827,7 @@ export function registerInvoicingRoutes(router: Router): void {
     const auth = requireUser(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const created = await createVoucher(normalizeCreateInput(body), auth.id);
-    return voucherDto(created.voucher);
+    return await voucherDto(created.voucher);
   });
 
   router.post('/api/v1/vouchers/bulk', 'invoicing:create', async (ctx) => {
@@ -1848,8 +1852,8 @@ export function registerInvoicingRoutes(router: Router): void {
     return { total: results.length, ok: results.filter((r) => r.ok).length, results };
   });
 
-  router.get('/api/v1/vouchers/:id', 'invoicing:read', (ctx) => {
-    const row = getVoucherOrThrow(ctx.params.id);
+  router.get('/api/v1/vouchers/:id', 'invoicing:read', async (ctx) => {
+    const row = await getVoucherOrThrow(ctx.params.id);
     return {
       id: row.id,
       docType: row.doc_type,
@@ -1901,8 +1905,8 @@ function normalizeCreateInput(body: Record<string, unknown>): CreateVoucherInput
   };
 }
 
-function rideBase(row: VoucherRow) {
-  const company = getCompany();
+async function rideBase(row: VoucherRow) {
+  const company = await getCompany();
   return {
     company: {
       name: company.name,
@@ -1927,7 +1931,7 @@ function rideBase(row: VoucherRow) {
   };
 }
 
-function buildGuiaRide(row: VoucherRow): Buffer {
+async function buildGuiaRide(row: VoucherRow): Promise<Buffer> {
   const extra = parseJson<Record<string, unknown>>(row.extra_json, {});
   const transportista = (extra.transportista ?? {}) as Record<string, unknown>;
   const destinatarios = ((extra.destinatarios ?? []) as Record<string, unknown>[]).map((destinatario) => ({
@@ -1942,7 +1946,7 @@ function buildGuiaRide(row: VoucherRow): Buffer {
     })),
   }));
   return generarRideGuiaPdf({
-    ...rideBase(row),
+    ...await rideBase(row),
     dirPartida: String(extra.dirPartida ?? ''),
     transportista: {
       razonSocial: String(transportista.razonSocial ?? ''),
@@ -1956,7 +1960,7 @@ function buildGuiaRide(row: VoucherRow): Buffer {
   });
 }
 
-function buildRetencionRide(row: VoucherRow): Buffer {
+async function buildRetencionRide(row: VoucherRow): Promise<Buffer> {
   const extra = parseJson<Record<string, unknown>>(row.extra_json, {});
   const sujeto = (extra.sujeto ?? {}) as Record<string, unknown>;
   const docs = ((extra.docs ?? []) as Record<string, unknown>[]).map((doc) => ({
@@ -1975,7 +1979,7 @@ function buildRetencionRide(row: VoucherRow): Buffer {
     })),
   }));
   return generarRideRetencionPdf({
-    ...rideBase(row),
+    ...await rideBase(row),
     sujeto: {
       razonSocial: String(sujeto.razonSocial ?? row.client_name ?? ''),
       identificacion: String(sujeto.identificacion ?? row.client_id_number ?? ''),
@@ -1987,13 +1991,13 @@ function buildRetencionRide(row: VoucherRow): Buffer {
   });
 }
 
-function buildRideBuffer(row: VoucherRow): Buffer {
-  if (row.doc_type === '06') return buildGuiaRide(row);
-  if (row.doc_type === '07') return buildRetencionRide(row);
-  const company = getCompany();
-  const client = row.client_id ? findClient(row.client_id) : undefined;
-  const items = queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [row.id]);
-  const payments = queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [row.id]);
+async function buildRideBuffer(row: VoucherRow): Promise<Buffer> {
+  if (row.doc_type === '06') return await buildGuiaRide(row);
+  if (row.doc_type === '07') return await buildRetencionRide(row);
+  const company = await getCompany();
+  const client = row.client_id ? await findClient(row.client_id) : undefined;
+  const items = await queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [row.id]);
+  const payments = await queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [row.id]);
   const taxTotals = buildTotalImpuestos(items).map((tax) => ({
     codigoPorcentaje: tax.codigoPorcentaje,
     tarifa: tax.tarifa / 100,
@@ -2052,5 +2056,12 @@ function buildRideBuffer(row: VoucherRow): Buffer {
 }
 
 export { buildRideBuffer, buildTotalImpuestos };
+
+
+
+
+
+
+
 
 

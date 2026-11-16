@@ -10,8 +10,8 @@ import { SRI_ENDPOINTS } from '../../../../packages/shared/src/index.ts';
 import { inspectSigningMaterial, probarConectividadSri } from '../../../../packages/sri/src/index.ts';
 
 export function registerIntegrationRoutes(router: Router): void {
-  router.get('/api/integration/upconta', 'company:read', () => {
-    const company = getCompany();
+  router.get('/api/integration/upconta', 'company:read', async () => {
+    const company = await getCompany();
     return {
       mode: company.sri_mode,
       baseUrl: company.upconta_base_url ?? 'https://api.upconta.com',
@@ -24,12 +24,12 @@ export function registerIntegrationRoutes(router: Router): void {
     };
   });
 
-  router.put('/api/integration/upconta', 'company:write', (ctx) => {
+  router.put('/api/integration/upconta', 'company:write', async (ctx) => {
     const auth = requireUser(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
-    const company = getCompany();
+    const company = await getCompany();
     const token = body.token !== undefined && body.token !== '********' ? str(body.token, 'token') || null : company.upconta_token;
-    execute(
+    await execute(
       'UPDATE company SET upconta_base_url=?, upconta_token=?, upconta_ruc=?, upconta_estab=?, upconta_pto_emi=?, updated_at=? WHERE id=?',
       [
         body.baseUrl !== undefined ? str(body.baseUrl, 'baseUrl') || null : company.upconta_base_url,
@@ -42,11 +42,11 @@ export function registerIntegrationRoutes(router: Router): void {
       ],
     );
     void auth;
-    return companyDto(getCompany()).upconta;
+    return (await companyDto(await getCompany())).upconta;
   });
 
   router.post('/api/integration/upconta/test', 'company:write', async () => {
-    const company = getCompany();
+    const company = await getCompany();
     const baseUrl = (company.upconta_base_url ?? 'https://api.upconta.com').replace(/\/$/, '');
     if (!company.upconta_token) throw ApiError.badRequest('Configure el token de integración de UpConta');
     try {
@@ -80,8 +80,8 @@ export function registerIntegrationRoutes(router: Router): void {
 
   /* ------------------------------------------------- conectividad SRI */
 
-  router.get('/api/integration/sri/status', 'company:read', () => {
-    const company = getCompany();
+  router.get('/api/integration/sri/status', 'company:read', async () => {
+    const company = await getCompany();
     const certificateDir = company.certificate_path;
     let certificate = null;
     if (certificateDir && fs.existsSync(path.join(certificateDir, 'certificate.pem'))) {
@@ -111,7 +111,7 @@ export function registerIntegrationRoutes(router: Router): void {
   });
 
   router.post('/api/integration/sri/test', 'company:write', async () => {
-    const company = getCompany();
+    const company = await getCompany();
     const ambiente = company.environment === 2 ? 2 : 1;
     const connectivity = await probarConectividadSri(ambiente);
     const certificateDir = company.certificate_path;
@@ -148,12 +148,12 @@ export function registerIntegrationRoutes(router: Router): void {
 
   /* -------------------------------------------------------- API tokens */
 
-  router.get('/api/integration/tokens', 'company:read', (ctx) => {
+  router.get('/api/integration/tokens', 'company:read', async (ctx) => {
     const companyId = requireTenant(ctx);
-    return pAll<Record<string, unknown>>(
+    return (await pAll<Record<string, unknown>>(
       'SELECT id, name, status, created_at FROM platform_api_tokens WHERE company_id = ? ORDER BY created_at DESC',
       [companyId],
-    ).map((row) => ({
+    )).map((row) => ({
       id: String(row.id),
       name: String(row.name),
       status: String(row.status),
@@ -161,13 +161,13 @@ export function registerIntegrationRoutes(router: Router): void {
     }));
   });
 
-  router.post('/api/integration/tokens', 'company:write', (ctx) => {
+  router.post('/api/integration/tokens', 'company:write', async (ctx) => {
     const companyId = requireTenant(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const name = str(body.name, 'name', { required: true, max: 120 });
     const token = randomToken(24);
     const id = newId();
-    pExec('INSERT INTO platform_api_tokens (id, company_id, name, token_hash, status, created_at) VALUES (?,?,?,?,?,?)', [
+    await pExec('INSERT INTO platform_api_tokens (id, company_id, name, token_hash, status, created_at) VALUES (?,?,?,?,?,?)', [
       id,
       companyId,
       name,
@@ -183,12 +183,11 @@ export function registerIntegrationRoutes(router: Router): void {
     };
   });
 
-  router.delete('/api/integration/tokens/:id', 'company:write', (ctx) => {
+  router.delete('/api/integration/tokens/:id', 'company:write', async (ctx) => {
     const companyId = requireTenant(ctx);
-    const row = pOne('SELECT id FROM platform_api_tokens WHERE id = ? AND company_id = ?', [ctx.params.id, companyId]);
+    const row = await pOne('SELECT id FROM platform_api_tokens WHERE id = ? AND company_id = ?', [ctx.params.id, companyId]);
     if (!row) throw ApiError.notFound('Token no encontrado');
-    pExec("UPDATE platform_api_tokens SET status = 'revoked' WHERE id = ? AND company_id = ?", [ctx.params.id, companyId]);
+    await pExec("UPDATE platform_api_tokens SET status = 'revoked' WHERE id = ? AND company_id = ?", [ctx.params.id, companyId]);
     return { message: 'Token revocado' };
   });
 }
-
