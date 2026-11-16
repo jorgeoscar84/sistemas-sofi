@@ -35,6 +35,7 @@ const {
   verifySignedXml,
   SimplePdf,
   encodeWinAnsi,
+  generarRidePdf,
 } = await import('../../../packages/sri/src/index.ts');
 const { expandRc2Key, rc2DecryptBlock, rc2EncryptBlock } = await import('../../../packages/sri/src/rc2.ts');
 const { centsFromInput } = await import('../../web/static/lib.js');
@@ -275,6 +276,34 @@ test('RIDE: codificación WinAnsi conserva tildes y eñes', () => {
   assert.ok(bytes.includes(Buffer.from([0x4d, 0x55, 0xd1, 0x49, 0x5a])), 'debe contener MUÑIZ en WinAnsi');
   assert.ok(!bytes.includes(Buffer.from([0xc3, 0x91])), 'no debe contener la Ñ codificada como UTF-8');
   assert.ok(bytes.includes(Buffer.from([0xf3, 0x6e])), 'debe contener ó+n de Dirección');
+});
+
+test('RIDE: incluye autorización, clave, barcode y totales sin NaN', () => {
+  const pdf = generarRidePdf({
+    company: { name: 'JORGE MUÑIZ OSCAR', ruc: '1756705784001', address: 'QUITO', obligedAccounting: false },
+    docTypeName: 'FACTURA',
+    docTypeCode: '01',
+    number: '001-003-000000002',
+    accessKey: '1611202601175670578400120010030000000029068890712',
+    environmentLabel: 'PRODUCCIÓN — los comprobantes tienen valor tributario',
+    authorizationNumber: '1611202601175670578400120010030000000029068890712',
+    authorizationDate: '2026-11-16T12:01:59-05:00',
+    issueDate: '16/11/2026',
+    client: { name: 'LAGUAYABASERVICES S.A.S', idType: '04', idNumber: '1793229112001' },
+    items: [{ codigo: 'S001', descripcion: 'Comisiones', cantidad: 1, precioUnitario: 394, descuento: 0, subtotal: 394, impuestos: [] }],
+    taxTotals: [{ codigo: '2', codigoPorcentaje: '4', tarifa: 0.15, baseImponible: 394, valor: 59.1 }],
+    subtotal: 394,
+    discount: 0,
+    total: 453.1,
+    payments: [{ method: 'TRANSFERENCIA', amount: 453.1 }],
+  });
+  const raw = pdf.toString('latin1');
+  assert.ok(pdf.length > 1000);
+  assert.ok(raw.includes('NÚMERO DE AUTORIZACIÓN'));
+  assert.ok(raw.includes('CLAVE DE ACCESO'));
+  assert.ok(raw.includes('VALOR TOTAL'));
+  assert.ok(raw.includes('FORMA DE PAGO'));
+  assert.ok(!raw.includes('NaN'));
 });
 
 test('segunda factura usa el siguiente secuencial', async () => {
@@ -838,6 +867,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 
 
 

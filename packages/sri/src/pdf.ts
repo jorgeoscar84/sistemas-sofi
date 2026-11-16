@@ -121,6 +121,26 @@ export class SimplePdf {
     this.current.rects.push({ x, y, w, h, gray });
   }
 
+  /** Rectángulo usando coordenadas desde arriba (como `text`). */
+  box(x: number, top: number, w: number, h: number, gray = 0.9): void {
+    this.rect(x, this.height - top - h, w, h, gray);
+  }
+
+  /** Línea horizontal usando coordenadas desde arriba. */
+  hline(x1: number, x2: number, top: number, width = 0.5): void {
+    this.line(x1, this.height - top, x2, this.height - top, width);
+  }
+
+  /** Línea vertical usando coordenadas desde arriba. */
+  vline(x: number, top1: number, top2: number, width = 0.5): void {
+    this.line(x, this.height - top1, x, this.height - top2, width);
+  }
+
+  /** Barra negra para códigos de barras. */
+  bar(x: number, top: number, w: number, h: number): void {
+    this.rect(x, this.height - top - h, w, h, 0);
+  }
+
   /** Texto alineado a la derecha terminando en `right`. */
   textRight(right: number, y: number, text: string, opts: { size?: number; font?: FontName } = {}): void {
     const size = opts.size ?? 8;

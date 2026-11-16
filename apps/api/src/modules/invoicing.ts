@@ -2001,6 +2001,7 @@ async function buildRideBuffer(row: VoucherRow): Promise<Buffer> {
   const items = await queryAll<VoucherItemRow>('SELECT * FROM voucher_items WHERE voucher_id = ?', [row.id]);
   const payments = await queryAll<PaymentRow>('SELECT * FROM voucher_payments WHERE voucher_id = ?', [row.id]);
   const taxTotals = buildTotalImpuestos(items).map((tax) => ({
+    codigo: tax.codigo,
     codigoPorcentaje: tax.codigoPorcentaje,
     tarifa: tax.tarifa / 100,
     baseImponible: tax.baseImponible,
@@ -2027,17 +2028,21 @@ async function buildRideBuffer(row: VoucherRow): Promise<Buffer> {
     authorizationNumber: row.authorization_number ?? undefined,
     authorizationDate: row.authorization_date ?? undefined,
     issueDate: formatFecha(row.issue_date),
+    dueDate: formatFecha(row.issue_date),
+    emissionLabel: 'NORMAL',
     statusLabel: row.status,
     client: {
       name: row.client_name ?? 'CONSUMIDOR FINAL',
       idType: row.client_id_type ?? '07',
       idNumber: row.client_id_number ?? '9999999999999',
       address: client?.address ?? undefined,
+      phone: client?.phone ?? undefined,
       email: client?.email ?? undefined,
     },
     items: items.map((item) => ({
       codigo: item.code,
       descripcion: item.description,
+      unidad: 'Unidad',
       cantidad: Number(item.quantity),
       precioUnitario: item.unit_price_cents / 100,
       descuento: item.discount_cents / 100,
