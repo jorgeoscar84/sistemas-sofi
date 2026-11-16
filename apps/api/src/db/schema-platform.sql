@@ -1,8 +1,6 @@
 -- Esquema de la plataforma (multiempresa): usuarios globales, licencias y tokens.
--- Cada empresa tiene su propia base de datos SQLite aislada (data/tenants/<id>.db).
+-- Cada empresa tiene su propio schema PostgreSQL aislado.
 
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS platform_companies (
   id TEXT PRIMARY KEY,

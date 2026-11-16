@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Plataforma multiempresa de facturación electrónica para Ecuador (SRI): licencias, empresas aisladas, comprobantes, productos y servicios, Kardex e integración directa con el SRI. Stack sin dependencias: Node.js 24 nativo + frontend vanilla JS.",
+  "description": "Plataforma multiempresa de facturación electrónica para Ecuador (SRI): licencias, empresas aisladas, comprobantes, productos y servicios, Kardex e integración directa con el SRI. Node.js 24 + PostgreSQL 18 + frontend vanilla JS.",
   "engines": {
     "node": ">=23.6.0"
   },
@@ -21,5 +21,15 @@
     "probar:emision": "node scripts/probar-emision-sri.mjs",
     "backup": "node scripts/backup.mjs",
     "reset-db": "node -e \"const fs=require('node:fs');for(const f of ['data/platform.db','data/platform.db-wal','data/platform.db-shm'])try{fs.rmSync(f)}catch{};try{fs.rmSync('data/tenants',{recursive:true,force:true})}catch{};console.log('bases de datos eliminadas')\""
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "typescript": "^7.0.2"
   }
 }
+

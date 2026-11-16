@@ -1,8 +1,6 @@
--- Esquema de la base de datos (SQLite vía node:sqlite).
+-- Esquema PostgreSQL de la base de datos de cada empresa (schema por tenant).
 -- Dinero: montos en centavos enteros. Fechas: ISO-8601 UTC en TEXT.
 
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
 
 
 CREATE TABLE IF NOT EXISTS company (
@@ -101,7 +99,7 @@ CREATE TABLE IF NOT EXISTS products (
   irbpnr_code TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   track_stock INTEGER NOT NULL DEFAULT 1,
-  min_stock REAL NOT NULL DEFAULT 0,
+  min_stock DOUBLE PRECISION NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE (type, code)
@@ -121,7 +119,7 @@ CREATE TABLE IF NOT EXISTS warehouses (
 CREATE TABLE IF NOT EXISTS stocks (
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   warehouse_id TEXT NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
-  amount REAL NOT NULL DEFAULT 0,
+  amount DOUBLE PRECISION NOT NULL DEFAULT 0,
   avg_cost_cents INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (product_id, warehouse_id)
@@ -147,7 +145,7 @@ CREATE TABLE IF NOT EXISTS stock_voucher_items (
   id TEXT PRIMARY KEY,
   voucher_id TEXT NOT NULL REFERENCES stock_vouchers(id) ON DELETE CASCADE,
   product_id TEXT NOT NULL REFERENCES products(id),
-  quantity REAL NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
   unit_cost_cents INTEGER NOT NULL DEFAULT 0,
   lot TEXT,
   expires_at TEXT
@@ -162,10 +160,10 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   date TEXT NOT NULL,
   type TEXT NOT NULL,
   description TEXT,
-  quantity_in REAL NOT NULL DEFAULT 0,
-  quantity_out REAL NOT NULL DEFAULT 0,
+  quantity_in DOUBLE PRECISION NOT NULL DEFAULT 0,
+  quantity_out DOUBLE PRECISION NOT NULL DEFAULT 0,
   unit_cost_cents INTEGER NOT NULL DEFAULT 0,
-  balance_qty REAL NOT NULL DEFAULT 0,
+  balance_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
   balance_cost_cents INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
@@ -215,7 +213,7 @@ CREATE TABLE IF NOT EXISTS voucher_items (
   code TEXT NOT NULL,
   aux_code TEXT,
   description TEXT NOT NULL,
-  quantity REAL NOT NULL,
+  quantity DOUBLE PRECISION NOT NULL,
   unit_price_cents INTEGER NOT NULL,
   discount_cents INTEGER NOT NULL DEFAULT 0,
   subtotal_cents INTEGER NOT NULL,

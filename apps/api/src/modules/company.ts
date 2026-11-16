@@ -44,22 +44,22 @@ const SEQUENCE_FIELDS = [
   'seq_sales_note',
 ] as const;
 
-export function getCompany(): CompanyRow {
-  let row = queryOne<CompanyRow>('SELECT * FROM company LIMIT 1');
+export async function getCompany(): Promise<CompanyRow> {
+  let row = await queryOne<CompanyRow>('SELECT * FROM company LIMIT 1');
   if (!row) {
     const id = newId();
-    execute(
+    await execute(
       `INSERT INTO company (id, ruc, name, trade_name, address, email, phone, obliged_accounting, rimpe, agent_retention,
         environment, sri_mode, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, '9999999999999', 'MI EMPRESA', 'MI EMPRESA', 'Quito - Ecuador', null, null, 0, null, null, 1, 'mock', nowIso(), nowIso()],
     );
-    row = queryOne<CompanyRow>('SELECT * FROM company LIMIT 1')!;
+    row = (await queryOne<CompanyRow>('SELECT * FROM company LIMIT 1'))!;
   }
   return row;
 }
 
-export function companyDto(row: CompanyRow) {
-  const platformRow = pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [row.id]);
+export async function companyDto(row: CompanyRow) {
+  const platformRow = await pOne<PlatformCompanyRow>('SELECT * FROM platform_companies WHERE id = ?', [row.id]);
   return {
     id: row.id,
     ruc: row.ruc,
@@ -88,12 +88,29 @@ export function companyDto(row: CompanyRow) {
   };
 }
 
-export function getEstablishments() {
-  const rows = queryAll<Record<string, unknown>>('SELECT * FROM establishments ORDER BY code ASC');
-  return rows.map((est) => {
-    const points = queryAll<Record<string, unknown>>(
-      'SELECT * FROM emission_points WHERE establishment_id = ? ORDER BY code ASC',
-      [est.id],
+export async function getEstablishments() {
+  const rows = await queryAll<Record<string, unknown>>('SELECT * FROM establishments ORDER BY code ASC');
+  const establishments: Array<{
+    id: string;
+    code: string;
+    name: string;
+    address: string | null;
+    status: string;
+    emissionPoints: Array<{
+      id: string;
+      establishmentId: string;
+      code: string;
+      name: string;
+      status: string;
+      sequences: Record<string, number>;
+    }>;
+  }> = [];
+  for (const est of rows) {
+    const points = (
+      await queryAll<Record<string, unknown>>(
+        'SELECT * FROM emission_points WHERE establishment_id = ? ORDER BY code ASC',
+        [est.id],
+      )
     ).map((point) => ({
       id: String(point.id),
       establishmentId: String(point.establishment_id),
@@ -102,15 +119,16 @@ export function getEstablishments() {
       status: String(point.status),
       sequences: Object.fromEntries(SEQUENCE_FIELDS.map((field) => [SEQUENCE_LABELS[field] ?? toCamelSequence(field), Number(point[field] ?? 1)])),
     }));
-    return {
+    establishments.push({
       id: String(est.id),
       code: String(est.code),
       name: String(est.name),
       address: est.address ? String(est.address) : null,
       status: String(est.status),
       emissionPoints: points,
-    };
-  });
+    });
+  }
+  return establishments;
 }
 
 const SEQUENCE_LABELS: Record<string, string> = {
@@ -127,11 +145,11 @@ function toCamelSequence(field: string): string {
 }
 
 export function registerCompanyRoutes(router: Router): void {
-  router.get('/api/company', 'company:read', () => companyDto(getCompany()));
+  router.get('/api/company', 'company:read', async () => companyDto(await getCompany()));
 
-  router.put('/api/company', 'company:write', (ctx) => {
+  router.put('/api/company', 'company:write', async (ctx) => {
     const auth = requireUser(ctx);
-    const row = getCompany();
+    const row = await getCompany();
     const body = bodyOf<Record<string, unknown>>(ctx);
     const environment = body.environment !== undefined ? Number(body.environment) : row.environment;
     if (environment !== 1 && environment !== 2) throw ApiError.badRequest('Ambiente del SRI inválido (1=pruebas, 2=producción)');
@@ -166,14 +184,14 @@ export function registerCompanyRoutes(router: Router): void {
     }
     // El RUC identifica a la empresa/licencia en la plataforma: validarlo antes de guardar
     // para no exponer nunca un error de restricción SQL.
-    const rucOwner = pOne<{ id: string }>('SELECT id FROM platform_companies WHERE ruc = ?', [newRuc]);
+    const rucOwner = await pOne<{ id: string }>('SELECT id FROM platform_companies WHERE ruc = ?', [newRuc]);
     if (rucOwner && rucOwner.id !== row.id) {
       throw ApiError.conflict(
         `Ya existe otra empresa/licencia con el RUC ${newRuc}. Use un RUC diferente o edite la empresa existente.`,
       );
     }
 
-    execute(
+    await execute(
       `UPDATE company SET ruc=?, name=?, trade_name=?, address=?, email=?, phone=?, obliged_accounting=?, rimpe=?,
         agent_retention=?, environment=?, sri_mode=?, signature_digest=?, upconta_base_url=?, upconta_token=?,
         upconta_ruc=?, upconta_estab=?, upconta_pto_emi=?, updated_at=? WHERE id=?`,
@@ -203,7 +221,7 @@ export function registerCompanyRoutes(router: Router): void {
     );
     // Mantener sincronizados los datos maestros en la licencia (plataforma).
     try {
-      pExec(
+      await pExec(
         'UPDATE platform_companies SET ruc=?, name=?, trade_name=?, email=?, phone=?, address=?, updated_at=? WHERE id=?',
         [newRuc, newName, newTradeName, newEmail, newPhone, newAddress, nowIso(), row.id],
       );
@@ -213,21 +231,21 @@ export function registerCompanyRoutes(router: Router): void {
       }
       throw error;
     }
-    audit('company', row.id, 'edit', `Configuración actualizada por ${auth.name}`, auth.id);
-    return companyDto(getCompany());
+    await audit('company', row.id, 'edit', `Configuración actualizada por ${auth.name}`, auth.id);
+    return await companyDto(await getCompany());
   });
 
-  router.get('/api/company/establishments', 'company:read', () => getEstablishments());
+  router.get('/api/company/establishments', 'company:read', async () => getEstablishments());
 
-  router.post('/api/company/establishments', 'company:write', (ctx) => {
+  router.post('/api/company/establishments', 'company:write', async (ctx) => {
     const body = bodyOf<Record<string, unknown>>(ctx);
     const code = str(body.code, 'code', { required: true, max: 3 });
     if (!/^\d{3}$/.test(code)) throw ApiError.badRequest('El código de establecimiento debe tener 3 dígitos');
-    if (queryOne('SELECT id FROM establishments WHERE code = ?', [code])) {
+    if (await queryOne('SELECT id FROM establishments WHERE code = ?', [code])) {
       throw ApiError.conflict('Ya existe un establecimiento con ese código');
     }
     const id = newId();
-    execute('INSERT INTO establishments (id, code, name, address, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)', [
+    await execute('INSERT INTO establishments (id, code, name, address, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)', [
       id,
       code,
       str(body.name, 'name', { required: true }),
@@ -236,58 +254,58 @@ export function registerCompanyRoutes(router: Router): void {
       nowIso(),
       nowIso(),
     ]);
-    return getEstablishments().find((e) => e.id === id);
+    return (await getEstablishments()).find((e) => e.id === id);
   });
 
-  router.put('/api/company/establishments/:id', 'company:write', (ctx) => {
-    const row = queryOne('SELECT * FROM establishments WHERE id = ?', [ctx.params.id]);
+  router.put('/api/company/establishments/:id', 'company:write', async (ctx) => {
+    const row = await queryOne('SELECT * FROM establishments WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Establecimiento no encontrado');
     const body = bodyOf<Record<string, unknown>>(ctx);
-    execute('UPDATE establishments SET name=?, address=?, status=?, updated_at=? WHERE id=?', [
+    await execute('UPDATE establishments SET name=?, address=?, status=?, updated_at=? WHERE id=?', [
       body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name,
       body.address !== undefined ? str(body.address, 'address') || null : row.address,
       body.status !== undefined ? str(body.status, 'status') : row.status,
       nowIso(),
       ctx.params.id,
     ]);
-    return getEstablishments().find((e) => e.id === ctx.params.id);
+    return (await getEstablishments()).find((e) => e.id === ctx.params.id);
   });
 
-  router.delete('/api/company/establishments/:id', 'company:write', (ctx) => {
-    const points = queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM emission_points WHERE establishment_id = ?', [
+  router.delete('/api/company/establishments/:id', 'company:write', async (ctx) => {
+    const points = await queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM emission_points WHERE establishment_id = ?', [
       ctx.params.id,
     ]);
     if ((points?.total ?? 0) > 0) throw ApiError.badRequest('No se puede eliminar: tiene puntos de emisión');
-    const used = queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM vouchers WHERE establishment_id = ?', [
+    const used = await queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM vouchers WHERE establishment_id = ?', [
       ctx.params.id,
     ]);
     if ((used?.total ?? 0) > 0) throw ApiError.badRequest('No se puede eliminar: tiene comprobantes emitidos');
-    execute('DELETE FROM establishments WHERE id = ?', [ctx.params.id]);
+    await execute('DELETE FROM establishments WHERE id = ?', [ctx.params.id]);
     return { message: 'Establecimiento eliminado' };
   });
 
-  router.post('/api/company/establishments/:id/emission-points', 'company:write', (ctx) => {
-    const establishment = queryOne('SELECT * FROM establishments WHERE id = ?', [ctx.params.id]);
+  router.post('/api/company/establishments/:id/emission-points', 'company:write', async (ctx) => {
+    const establishment = await queryOne('SELECT * FROM establishments WHERE id = ?', [ctx.params.id]);
     if (!establishment) throw ApiError.notFound('Establecimiento no encontrado');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const code = str(body.code, 'code', { required: true, max: 3 });
     if (!/^\d{3}$/.test(code)) throw ApiError.badRequest('El código del punto de emisión debe tener 3 dígitos');
     if (
-      queryOne('SELECT id FROM emission_points WHERE establishment_id = ? AND code = ?', [ctx.params.id, code])
+      await queryOne('SELECT id FROM emission_points WHERE establishment_id = ? AND code = ?', [ctx.params.id, code])
     ) {
       throw ApiError.conflict('Ya existe un punto de emisión con ese código en el establecimiento');
     }
     const id = newId();
-    execute(
+    await execute(
       `INSERT INTO emission_points (id, establishment_id, code, name, status, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?)`,
       [id, ctx.params.id, code, str(body.name, 'name', { required: true }) || 'Punto de emisión', 'active', nowIso(), nowIso()],
     );
-    return getEstablishments().find((e) => e.id === ctx.params.id);
+    return (await getEstablishments()).find((e) => e.id === ctx.params.id);
   });
 
-  router.put('/api/company/emission-points/:id', 'company:write', (ctx) => {
-    const row = queryOne('SELECT * FROM emission_points WHERE id = ?', [ctx.params.id]);
+  router.put('/api/company/emission-points/:id', 'company:write', async (ctx) => {
+    const row = await queryOne('SELECT * FROM emission_points WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Punto de emisión no encontrado');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const sequences = (body.sequences ?? {}) as Record<string, number>;
@@ -299,7 +317,7 @@ export function registerCompanyRoutes(router: Router): void {
       waybill: 'seq_waybill',
       salesNote: 'seq_sales_note',
     };
-    execute(
+    await execute(
       `UPDATE emission_points SET name=?, status=?, seq_invoice=?, seq_credit_note=?, seq_debit_note=?,
         seq_retention=?, seq_waybill=?, seq_sales_note=?, updated_at=? WHERE id=?`,
       [
@@ -314,21 +332,21 @@ export function registerCompanyRoutes(router: Router): void {
         ctx.params.id,
       ],
     );
-    return getEstablishments();
+    return await getEstablishments();
   });
 
-  router.delete('/api/company/emission-points/:id', 'company:write', (ctx) => {
-    const used = queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM vouchers WHERE emission_point_id = ?', [
+  router.delete('/api/company/emission-points/:id', 'company:write', async (ctx) => {
+    const used = await queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM vouchers WHERE emission_point_id = ?', [
       ctx.params.id,
     ]);
     if ((used?.total ?? 0) > 0) throw ApiError.badRequest('No se puede eliminar: el punto de emisión tiene comprobantes');
-    execute('DELETE FROM emission_points WHERE id = ?', [ctx.params.id]);
+    await execute('DELETE FROM emission_points WHERE id = ?', [ctx.params.id]);
     return { message: 'Punto de emisión eliminado' };
   });
 
   /* --------------------------------------------------------- certificado */
 
-  router.post('/api/company/certificate', 'company:write', (ctx) => {
+  router.post('/api/company/certificate', 'company:write', async (ctx) => {
     const body = bodyOf<Record<string, unknown>>(ctx);
     let certificatePem = str(body.certificatePem, 'certificatePem');
     let privateKeyPem = str(body.privateKeyPem, 'privateKeyPem');
@@ -368,19 +386,19 @@ export function registerCompanyRoutes(router: Router): void {
     }
     const info = inspectSigningMaterial(certificatePem, privateKeyPem);
     if (info.expired) throw ApiError.badRequest(`El certificado está vencido (válido hasta ${info.validTo})`);
-    const company = getCompany();
+    const company = await getCompany();
     const base = path.join(config.certDir, company.id);
     fs.mkdirSync(base, { recursive: true });
     fs.writeFileSync(path.join(base, 'certificate.pem'), certificatePem, 'utf8');
     fs.writeFileSync(path.join(base, 'private-key.pem'), privateKeyPem, 'utf8');
     const meta = { ...info, source, uploadedAt: nowIso() };
     fs.writeFileSync(path.join(base, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
-    execute('UPDATE company SET certificate_path = ?, updated_at = ? WHERE id = ?', [base, nowIso(), company.id]);
+    await execute('UPDATE company SET certificate_path = ?, updated_at = ? WHERE id = ?', [base, nowIso(), company.id]);
     return { message: 'Certificado guardado', hasSignature: true, certificate: info, source };
   });
 
-  router.get('/api/company/certificate/status', 'company:read', () => {
-    const company = getCompany();
+  router.get('/api/company/certificate/status', 'company:read', async () => {
+    const company = await getCompany();
     const hasSignature = Boolean(company.certificate_path && fs.existsSync(company.certificate_path));
     const certificateFile = company.certificate_path ? path.join(company.certificate_path, 'certificate.pem') : null;
     const info =
@@ -395,18 +413,13 @@ export function registerCompanyRoutes(router: Router): void {
 
   /* ----------------------------------------------------------- catálogos */
 
-  router.get('/api/catalogs', null, () => {
+  router.get('/api/catalogs', null, async () => {
     const categories = camelAll(
-      queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC'),
+      await queryAll('SELECT id, name, parent_id FROM categories ORDER BY name ASC'),
     );
-    const units = camelAll(queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC'));
+    const units = camelAll(await queryAll('SELECT id, code, name, abbr FROM units ORDER BY name ASC'));
     return { ...buildCatalogs(), categories, units, consumidorFinal: CONSUMIDOR_FINAL };
   });
 }
 
 export { camel };
-
-
-
-
-

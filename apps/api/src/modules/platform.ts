@@ -3,6 +3,9 @@
  *
  * El superadministrador crea empresas (licencias), asigna su administrador,
  * activa/suspende/renueva licencias y puede entrar a configurar cualquier empresa.
+ *
+ * `db.ts` es PostgreSQL async: los handlers se declaran `async` y esperan
+ * (`await`) todas las consultas y las funciones de aprovisionamiento.
  */
 
 import {
@@ -68,9 +71,9 @@ function parseExpiry(value: unknown): string | null {
 export function registerPlatformRoutes(router: Router): void {
   /* ------------------------------------------------------------- resumen */
 
-  router.get('/api/platform/overview', null, (ctx) => {
+  router.get('/api/platform/overview', null, async (ctx) => {
     requireSuperadmin(ctx);
-    const companies = pAll<PlatformCompanyRow>('SELECT * FROM platform_companies ORDER BY created_at DESC');
+    const companies = await pAll<PlatformCompanyRow>('SELECT * FROM platform_companies ORDER BY created_at DESC');
     let users = 0;
     let vouchers = 0;
     let products = 0;
@@ -79,8 +82,8 @@ export function registerPlatformRoutes(router: Router): void {
     for (const company of companies) {
       const state = licenseState(company);
       byStatus[state.status] = (byStatus[state.status] ?? 0) + 1;
-      users += tenantUsers(company.id).length;
-      const metrics = tenantMetrics(company.id);
+      users += (await tenantUsers(company.id)).length;
+      const metrics = await tenantMetrics(company.id);
       vouchers += metrics.vouchers;
       issued += metrics.issued;
       products += metrics.products;
@@ -98,14 +101,15 @@ export function registerPlatformRoutes(router: Router): void {
 
   /* --------------------------------------------------------- licencias */
 
-  router.get('/api/platform/companies', null, (ctx) => {
+  router.get('/api/platform/companies', null, async (ctx) => {
     requireSuperadmin(ctx);
-    const companies = pAll<PlatformCompanyRow>('SELECT * FROM platform_companies ORDER BY created_at DESC');
-    return companies.map((company) => {
-      const metrics = tenantMetrics(company.id);
-      const config = tenantCompanyConfig(company.id);
-      const users = tenantUsers(company.id);
-      return {
+    const companies = await pAll<PlatformCompanyRow>('SELECT * FROM platform_companies ORDER BY created_at DESC');
+    const rows = [];
+    for (const company of companies) {
+      const metrics = await tenantMetrics(company.id);
+      const config = await tenantCompanyConfig(company.id);
+      const users = await tenantUsers(company.id);
+      rows.push({
         ...companyRow(company),
         license: licenseOf(company),
         metrics: {
@@ -122,11 +126,12 @@ export function registerPlatformRoutes(router: Router): void {
               signatureDigest: String(config.signature_digest ?? 'sha1'),
             }
           : null,
-      };
-    });
+      });
+    }
+    return rows;
   });
 
-  router.post('/api/platform/companies', null, (ctx) => {
+  router.post('/api/platform/companies', null, async (ctx) => {
     const auth = requireSuperadmin(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const ruc = str(body.ruc, 'ruc', { required: true });
@@ -150,7 +155,7 @@ export function registerPlatformRoutes(router: Router): void {
     const environment = body.environment !== undefined ? Number(body.environment) : 1;
     if (environment !== 1 && environment !== 2) throw ApiError.badRequest('Ambiente inválido');
 
-    const result = provisionCompany({
+    const result = await provisionCompany({
       ruc,
       name,
       tradeName: str(body.tradeName, 'tradeName') || undefined,
@@ -170,7 +175,7 @@ export function registerPlatformRoutes(router: Router): void {
       adminName,
       adminEmail: str(body.adminEmail, 'adminEmail') || undefined,
     });
-    pExec(
+    await pExec(
       'INSERT INTO platform_audit (id, company_id, entity, entity_id, type, note, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
       [newId(), result.company.id, 'license', result.company.id, 'created', `Licencia creada por ${auth.name} (${plan})`, auth.id, nowIso()],
     );
@@ -188,16 +193,18 @@ export function registerPlatformRoutes(router: Router): void {
     };
   });
 
-  router.get('/api/platform/companies/:id', null, (ctx) => {
+  router.get('/api/platform/companies/:id', null, async (ctx) => {
     requireSuperadmin(ctx);
-    const company = getPlatformCompany(ctx.params.id);
+    const company = await getPlatformCompany(ctx.params.id);
     if (!company) throw ApiError.notFound('Empresa no encontrada');
-    const config = tenantCompanyConfig(company.id);
+    const config = await tenantCompanyConfig(company.id);
+    const tenantUsersList = await tenantUsers(company.id);
+    const metrics = await tenantMetrics(company.id);
     return {
       ...companyRow(company),
       license: licenseOf(company),
       config,
-      users: tenantUsers(company.id).map((user) => ({
+      users: tenantUsersList.map((user) => ({
         id: user.id,
         username: user.username,
         name: user.name,
@@ -206,13 +213,13 @@ export function registerPlatformRoutes(router: Router): void {
         status: user.status,
         createdAt: user.created_at,
       })),
-      metrics: { ...tenantMetrics(company.id), users: tenantUsers(company.id).length },
+      metrics: { ...metrics, users: tenantUsersList.length },
     };
   });
 
-  router.put('/api/platform/companies/:id/license', null, (ctx) => {
+  router.put('/api/platform/companies/:id/license', null, async (ctx) => {
     const auth = requireSuperadmin(ctx);
-    const company = getPlatformCompany(ctx.params.id);
+    const company = await getPlatformCompany(ctx.params.id);
     if (!company) throw ApiError.notFound('Empresa no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const status = body.status !== undefined ? (String(body.status) as LicenseStatus) : (company.license_status as LicenseStatus);
@@ -223,11 +230,11 @@ export function registerPlatformRoutes(router: Router): void {
     const notes = body.notes !== undefined ? String(body.notes) : company.license_notes;
     const paymentReference =
       body.paymentReference !== undefined ? String(body.paymentReference) : company.payment_reference;
-    pExec(
+    await pExec(
       'UPDATE platform_companies SET license_status=?, license_plan=?, license_expires_at=?, license_notes=?, payment_reference=?, updated_at=? WHERE id=?',
       [status, plan, expiresAt, notes, paymentReference, nowIso(), company.id],
     );
-    pExec(
+    await pExec(
       'INSERT INTO platform_audit (id, company_id, entity, entity_id, type, note, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
       [
         newId(),
@@ -240,14 +247,14 @@ export function registerPlatformRoutes(router: Router): void {
         nowIso(),
       ],
     );
-    const updated = getPlatformCompany(company.id)!;
+    const updated = (await getPlatformCompany(company.id))!;
     return { company: companyRow(updated), license: licenseOf(updated) };
   });
 
   /** Gancho para automatizar la liberación cuando se detecte un pago. */
-  router.post('/api/platform/companies/:id/activate', null, (ctx) => {
+  router.post('/api/platform/companies/:id/activate', null, async (ctx) => {
     const auth = requireSuperadmin(ctx);
-    const company = getPlatformCompany(ctx.params.id);
+    const company = await getPlatformCompany(ctx.params.id);
     if (!company) throw ApiError.notFound('Empresa no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const paymentReference = str(body.paymentReference, 'paymentReference');
@@ -256,11 +263,11 @@ export function registerPlatformRoutes(router: Router): void {
       ? new Date(company.license_expires_at)
       : new Date();
     base.setMonth(base.getMonth() + (Number.isFinite(months) && months > 0 ? months : 12));
-    pExec(
+    await pExec(
       'UPDATE platform_companies SET license_status=?, license_expires_at=?, payment_reference=?, updated_at=? WHERE id=?',
       ['active', base.toISOString(), paymentReference || null, nowIso(), company.id],
     );
-    pExec(
+    await pExec(
       'INSERT INTO platform_audit (id, company_id, entity, entity_id, type, note, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
       [
         newId(),
@@ -273,33 +280,33 @@ export function registerPlatformRoutes(router: Router): void {
         nowIso(),
       ],
     );
-    const updated = getPlatformCompany(company.id)!;
+    const updated = (await getPlatformCompany(company.id))!;
     return { company: companyRow(updated), license: licenseOf(updated) };
   });
 
-  router.post('/api/platform/companies/:id/reset-admin-password', null, (ctx) => {
+  router.post('/api/platform/companies/:id/reset-admin-password', null, async (ctx) => {
     const auth = requireSuperadmin(ctx);
-    const company = getPlatformCompany(ctx.params.id);
+    const company = await getPlatformCompany(ctx.params.id);
     if (!company) throw ApiError.notFound('Empresa no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
     const password = str(body.password, 'password', { required: true });
     if (password.length < 6) throw ApiError.badRequest('La contraseña debe tener al menos 6 caracteres');
     const targetUserId = str(body.userId, 'userId') || company.admin_user_id || '';
     const user = targetUserId
-      ? pAll<{ id: string }>('SELECT id FROM platform_users WHERE id = ? AND company_id = ?', [targetUserId, company.id])[0]
+      ? (await pAll<{ id: string }>('SELECT id FROM platform_users WHERE id = ? AND company_id = ?', [targetUserId, company.id]))[0]
       : undefined;
     if (!user) throw ApiError.notFound('Administrador no encontrado');
-    pExec('UPDATE platform_users SET password_hash = ?, updated_at = ? WHERE id = ?', [hashPassword(password), nowIso(), user.id]);
-    pExec(
+    await pExec('UPDATE platform_users SET password_hash = ?, updated_at = ? WHERE id = ?', [hashPassword(password), nowIso(), user.id]);
+    await pExec(
       'INSERT INTO platform_audit (id, company_id, entity, entity_id, type, note, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
       [newId(), company.id, 'users', user.id, 'password-reset', `Contraseña restablecida por ${auth.name}`, auth.id, nowIso()],
     );
     return { message: 'Contraseña restablecida' };
   });
 
-  router.get('/api/platform/companies/:id/audit', null, (ctx) => {
+  router.get('/api/platform/companies/:id/audit', null, async (ctx) => {
     requireSuperadmin(ctx);
-    const rows = pAll<Record<string, unknown>>(
+    const rows = await pAll<Record<string, unknown>>(
       'SELECT * FROM platform_audit WHERE company_id = ? ORDER BY created_at DESC LIMIT 100',
       [ctx.params.id],
     );
@@ -315,20 +322,20 @@ export function registerPlatformRoutes(router: Router): void {
   });
 
   /** Agrega un usuario (por ejemplo un administrador adicional) a una empresa. */
-  router.post('/api/platform/companies/:id/users/assign-admin', null, (ctx) => {
+  router.post('/api/platform/companies/:id/users/assign-admin', null, async (ctx) => {
     const auth = requireSuperadmin(ctx);
-    const company = getPlatformCompany(ctx.params.id);
+    const company = await getPlatformCompany(ctx.params.id);
     if (!company) throw ApiError.notFound('Empresa no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
-    const created = addCompanyUser(company.id, {
+    const created = await addCompanyUser(company.id, {
       username: str(body.username, 'username', { required: true }),
       password: str(body.password, 'password', { required: true }),
       name: str(body.name, 'name', { required: true }),
       email: str(body.email, 'email') || undefined,
       role: 'admin',
     });
-    pExec('UPDATE platform_companies SET admin_user_id = ? WHERE id = ?', [created.id, company.id]);
-    pExec(
+    await pExec('UPDATE platform_companies SET admin_user_id = ? WHERE id = ?', [created.id, company.id]);
+    await pExec(
       'INSERT INTO platform_audit (id, company_id, entity, entity_id, type, note, user_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
       [newId(), company.id, 'users', created.id, 'admin-assigned', `Administrador ${created.username} asignado por ${auth.name}`, auth.id, nowIso()],
     );

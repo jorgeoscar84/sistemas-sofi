@@ -22,3 +22,6 @@ docs/upconta-api/
 *.db-shm
 .DS_Store
 Thumbs.db
+
+# npm cache local
+.npm-cache/

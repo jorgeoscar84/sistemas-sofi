@@ -27,9 +27,12 @@ interface StockRow {
   avg_cost_cents: number;
 }
 
-function getStockRow(productId: string, warehouseId: string): StockRow {
+async function getStockRow(productId: string, warehouseId: string): Promise<StockRow> {
   return (
-    queryOne<StockRow>('SELECT * FROM stocks WHERE product_id = ? AND warehouse_id = ?', [productId, warehouseId]) ?? {
+    (await queryOne<StockRow>('SELECT * FROM stocks WHERE product_id = ? AND warehouse_id = ?', [
+      productId,
+      warehouseId,
+    ])) ?? {
       product_id: productId,
       warehouse_id: warehouseId,
       amount: 0,
@@ -39,8 +42,12 @@ function getStockRow(productId: string, warehouseId: string): StockRow {
 }
 
 /** Aplica un movimiento de stock y actualiza el saldo y el costo promedio ponderado. */
-export function applyMovement(input: StockMovementInput): { movementId: string; balanceQty: number; balanceCostCents: number } {
-  const current = getStockRow(input.productId, input.warehouseId);
+export async function applyMovement(input: StockMovementInput): Promise<{
+  movementId: string;
+  balanceQty: number;
+  balanceCostCents: number;
+}> {
+  const current = await getStockRow(input.productId, input.warehouseId);
   const currentQty = Number(current.amount ?? 0);
   const currentAvg = Number(current.avg_cost_cents ?? 0);
   let newQty: number;
@@ -55,11 +62,13 @@ export function applyMovement(input: StockMovementInput): { movementId: string; 
         : unitCost;
   } else {
     if (input.quantity - currentQty > 1e-9) {
-      const product = queryOne<{ code: string; description: string }>(
+      const product = await queryOne<{ code: string; description: string }>(
         'SELECT code, description FROM products WHERE id = ?',
         [input.productId],
       );
-      const warehouse = queryOne<{ name: string }>('SELECT name FROM warehouses WHERE id = ?', [input.warehouseId]);
+      const warehouse = await queryOne<{ name: string }>('SELECT name FROM warehouses WHERE id = ?', [
+        input.warehouseId,
+      ]);
       const label = product ? `${product.code} · ${product.description}` : input.productId;
       throw ApiError.badRequest(
         `Stock insuficiente de "${label}" en ${warehouse?.name ?? 'la bodega'} ` +
@@ -73,7 +82,7 @@ export function applyMovement(input: StockMovementInput): { movementId: string; 
 
   const balanceCost = Math.round(newAvg * newQty);
   const movementId = newId();
-  execute(
+  await execute(
     `INSERT INTO stock_movements (id, voucher_id, voucher_code, product_id, warehouse_id, date, type, description,
       quantity_in, quantity_out, unit_cost_cents, balance_qty, balance_cost_cents, created_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -94,7 +103,7 @@ export function applyMovement(input: StockMovementInput): { movementId: string; 
       nowIso(),
     ],
   );
-  execute(
+  await execute(
     `INSERT INTO stocks (product_id, warehouse_id, amount, avg_cost_cents, updated_at) VALUES (?,?,?,?,?)
      ON CONFLICT(product_id, warehouse_id) DO UPDATE SET amount=excluded.amount,
        avg_cost_cents=excluded.avg_cost_cents, updated_at=excluded.updated_at`,
@@ -104,8 +113,8 @@ export function applyMovement(input: StockMovementInput): { movementId: string; 
 }
 
 /** Recalcula saldos y costo promedio de un producto/bodega a partir de sus movimientos. */
-function recomputeStock(productId: string, warehouseId: string): void {
-  const movements = queryAll<{
+async function recomputeStock(productId: string, warehouseId: string): Promise<void> {
+  const movements = await queryAll<{
     id: string;
     quantity_in: number;
     quantity_out: number;
@@ -127,13 +136,13 @@ function recomputeStock(productId: string, warehouseId: string): void {
     } else if (qOut > 0) {
       qty = Math.max(0, qty - qOut);
     }
-    execute('UPDATE stock_movements SET balance_qty = ?, balance_cost_cents = ? WHERE id = ?', [
+    await execute('UPDATE stock_movements SET balance_qty = ?, balance_cost_cents = ? WHERE id = ?', [
       qty,
       Math.round(avg * qty),
       movement.id,
     ]);
   }
-  execute(
+  await execute(
     `INSERT INTO stocks (product_id, warehouse_id, amount, avg_cost_cents, updated_at) VALUES (?,?,?,?,?)
      ON CONFLICT(product_id, warehouse_id) DO UPDATE SET amount=excluded.amount,
        avg_cost_cents=excluded.avg_cost_cents, updated_at=excluded.updated_at`,
@@ -141,13 +150,14 @@ function recomputeStock(productId: string, warehouseId: string): void {
   );
 }
 
-function nextVoucherCode(): string {
-  const total = queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM stock_vouchers')?.total ?? 0;
+async function nextVoucherCode(): Promise<string> {
+  const total =
+    Number((await queryOne<{ total: number }>('SELECT COUNT(*) AS total FROM stock_vouchers'))?.total ?? 0);
   return `CS-${String(total + 1).padStart(6, '0')}`;
 }
 
-function voucherDto(row: Record<string, unknown>) {
-  const items = queryAll<Record<string, unknown>>(
+async function voucherDto(row: Record<string, unknown>) {
+  const items = await queryAll<Record<string, unknown>>(
     `SELECT i.*, p.code AS product_code, p.description AS product_description
      FROM stock_voucher_items i JOIN products p ON p.id = i.product_id WHERE i.voucher_id = ?`,
     [row.id],
@@ -189,46 +199,48 @@ export interface StockVoucherInput {
 }
 
 /** Crea un comprobante de stock y aplica sus movimientos (usado también por el seed). */
-export function createStockVoucher(input: StockVoucherInput, userId: string | null) {
+export async function createStockVoucher(input: StockVoucherInput, userId: string | null) {
   if (!['income', 'outgoes', 'transfer', 'adjust'].includes(input.type)) {
     throw ApiError.badRequest('Tipo de comprobante de stock inválido');
   }
   if (!input.items || input.items.length === 0) throw ApiError.badRequest('El comprobante no tiene ítems');
-  if (!queryOne('SELECT id FROM warehouses WHERE id = ?', [input.warehouseId])) {
+  if (!(await queryOne('SELECT id FROM warehouses WHERE id = ?', [input.warehouseId]))) {
     throw ApiError.badRequest('La bodega de origen no existe');
   }
   if (input.type === 'transfer') {
     if (!input.toWarehouseId) throw ApiError.badRequest('La transferencia requiere bodega de destino');
     if (input.toWarehouseId === input.warehouseId) throw ApiError.badRequest('La bodega de destino debe ser diferente');
-    if (!queryOne('SELECT id FROM warehouses WHERE id = ?', [input.toWarehouseId])) {
+    if (!(await queryOne('SELECT id FROM warehouses WHERE id = ?', [input.toWarehouseId]))) {
       throw ApiError.badRequest('La bodega de destino no existe');
     }
   }
 
-  return transaction(() => {
+  return await transaction(async () => {
     const id = newId();
-    const code = nextVoucherCode();
+    const code = await nextVoucherCode();
     const date = input.date ?? nowIso();
     let totalCents = 0;
 
-    const resolved = input.items.map((item) => {
-      const product = findProduct(item.productId);
-      if (!product) throw ApiError.badRequest(`Producto no encontrado: ${item.productId}`);
-      const quantity = Number(item.quantity);
-      if (!Number.isFinite(quantity) || quantity <= 0) {
-        throw ApiError.badRequest(`Cantidad inválida para el producto ${product.code}`);
-      }
-      const current = getStockRow(item.productId, input.warehouseId);
-      const fallbackCost = Number(product.cost_cents ?? 0) || Number(current.avg_cost_cents ?? 0);
-      const unitCostCents =
-        item.unitCostCents !== undefined && item.unitCostCents !== null && Number(item.unitCostCents) > 0
-          ? Math.round(Number(item.unitCostCents))
-          : fallbackCost;
-      totalCents += Math.round(unitCostCents * quantity);
-      return { ...item, product, quantity, unitCostCents };
-    });
+    const resolved = await Promise.all(
+      input.items.map(async (item) => {
+        const product = await findProduct(item.productId);
+        if (!product) throw ApiError.badRequest(`Producto no encontrado: ${item.productId}`);
+        const quantity = Number(item.quantity);
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          throw ApiError.badRequest(`Cantidad inválida para el producto ${product.code}`);
+        }
+        const current = await getStockRow(item.productId, input.warehouseId);
+        const fallbackCost = Number(product.cost_cents ?? 0) || Number(current.avg_cost_cents ?? 0);
+        const unitCostCents =
+          item.unitCostCents !== undefined && item.unitCostCents !== null && Number(item.unitCostCents) > 0
+            ? Math.round(Number(item.unitCostCents))
+            : fallbackCost;
+        totalCents += Math.round(unitCostCents * quantity);
+        return { ...item, product, quantity, unitCostCents };
+      }),
+    );
 
-    execute(
+    await execute(
       `INSERT INTO stock_vouchers (id, code, type, date, warehouse_id, to_warehouse_id, provider, observation,
         total_cents, status, created_by, created_at, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -250,12 +262,12 @@ export function createStockVoucher(input: StockVoucherInput, userId: string | nu
     );
 
     for (const item of resolved) {
-      execute(
+      await execute(
         'INSERT INTO stock_voucher_items (id, voucher_id, product_id, quantity, unit_cost_cents, lot, expires_at) VALUES (?,?,?,?,?,?,?)',
         [newId(), id, item.productId, item.quantity, item.unitCostCents, item.lot ?? null, item.expiresAt ?? null],
       );
       if (input.type === 'income') {
-        applyMovement({
+        await applyMovement({
           voucherId: id,
           voucherCode: code,
           productId: item.productId,
@@ -268,7 +280,7 @@ export function createStockVoucher(input: StockVoucherInput, userId: string | nu
           unitCostCents: item.unitCostCents,
         });
       } else if (input.type === 'outgoes') {
-        applyMovement({
+        await applyMovement({
           voucherId: id,
           voucherCode: code,
           productId: item.productId,
@@ -281,7 +293,7 @@ export function createStockVoucher(input: StockVoucherInput, userId: string | nu
           unitCostCents: item.unitCostCents,
         });
       } else if (input.type === 'transfer') {
-        applyMovement({
+        await applyMovement({
           voucherId: id,
           voucherCode: code,
           productId: item.productId,
@@ -293,7 +305,7 @@ export function createStockVoucher(input: StockVoucherInput, userId: string | nu
           quantity: item.quantity,
           unitCostCents: item.unitCostCents,
         });
-        applyMovement({
+        await applyMovement({
           voucherId: id,
           voucherCode: code,
           productId: item.productId,
@@ -308,45 +320,45 @@ export function createStockVoucher(input: StockVoucherInput, userId: string | nu
       }
     }
 
-    if (userId) audit('stock_vouchers', id, 'created', `Creado por usuario`, userId);
-    return voucherDto(queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [id])!);
+    if (userId) await audit('stock_vouchers', id, 'created', `Creado por usuario`, userId);
+    return await voucherDto((await queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [id]))!);
   });
 }
 
 /** Ajuste por cantidad objetivo: genera ingreso o egreso por la diferencia. */
-export function adjustStock(
+export async function adjustStock(
   input: { warehouseId: string; date?: string; items: { productId: string; targetQuantity: number }[] },
   userId: string | null,
 ) {
-  return transaction(() => {
-    if (!queryOne('SELECT id FROM warehouses WHERE id = ?', [input.warehouseId])) {
+  return await transaction(async () => {
+    if (!(await queryOne('SELECT id FROM warehouses WHERE id = ?', [input.warehouseId]))) {
       throw ApiError.badRequest('La bodega no existe');
     }
     const id = newId();
-    const code = nextVoucherCode();
+    const code = await nextVoucherCode();
     const date = input.date ?? nowIso();
-    execute(
+    await execute(
       `INSERT INTO stock_vouchers (id, code, type, date, warehouse_id, provider, observation, total_cents, status,
         created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, code, 'adjust', date, input.warehouseId, null, 'Ajuste de stock', 0, 'applied', userId, nowIso(), nowIso()],
     );
     let total = 0;
     for (const item of input.items) {
-      const product = findProduct(item.productId);
+      const product = await findProduct(item.productId);
       if (!product) throw ApiError.badRequest(`Producto no encontrado: ${item.productId}`);
-      const current = getStockRow(item.productId, input.warehouseId);
+      const current = await getStockRow(item.productId, input.warehouseId);
       const currentQty = Number(current.amount ?? 0);
       const target = Number(item.targetQuantity);
       if (!Number.isFinite(target) || target < 0) throw ApiError.badRequest('Cantidad objetivo inválida');
       const diff = target - currentQty;
       if (Math.abs(diff) < 1e-9) continue;
       const unitCost = Number(current.avg_cost_cents ?? 0) || Number(product.cost_cents ?? 0);
-      execute(
+      await execute(
         'INSERT INTO stock_voucher_items (id, voucher_id, product_id, quantity, unit_cost_cents) VALUES (?,?,?,?,?)',
         [newId(), id, item.productId, Math.abs(diff), unitCost],
       );
       total += Math.round(unitCost * Math.abs(diff));
-      applyMovement({
+      await applyMovement({
         voucherId: id,
         voucherCode: code,
         productId: item.productId,
@@ -359,9 +371,9 @@ export function adjustStock(
         unitCostCents: unitCost,
       });
     }
-    execute('UPDATE stock_vouchers SET total_cents = ? WHERE id = ?', [total, id]);
-    if (userId) audit('stock_vouchers', id, 'created', 'Ajuste de stock', userId);
-    return voucherDto(queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [id])!);
+    await execute('UPDATE stock_vouchers SET total_cents = ? WHERE id = ?', [total, id]);
+    if (userId) await audit('stock_vouchers', id, 'created', 'Ajuste de stock', userId);
+    return await voucherDto((await queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [id]))!);
   });
 }
 
@@ -370,9 +382,9 @@ export function adjustStock(
  * Verifica disponibilidad de stock ANTES de emitir una factura, para no consumir
  * un secuencial ni crear un comprobante que luego falle en el inventario.
  */
-export function assertStockForSale(items: { productId: string; quantity: number }[]): void {
+export async function assertStockForSale(items: { productId: string; quantity: number }[]): Promise<void> {
   if (!items.length) return;
-  const warehouse = queryOne<{ id: string; name: string }>(
+  const warehouse = await queryOne<{ id: string; name: string }>(
     "SELECT id, name FROM warehouses WHERE status = 'active' ORDER BY code ASC LIMIT 1",
   );
   if (!warehouse) return;
@@ -381,9 +393,9 @@ export function assertStockForSale(items: { productId: string; quantity: number 
     required.set(item.productId, (required.get(item.productId) ?? 0) + Number(item.quantity));
   }
   for (const [productId, quantity] of required) {
-    const product = findProduct(productId);
+    const product = await findProduct(productId);
     if (!product || !product.track_stock) continue;
-    const available = Number(getStockRow(productId, warehouse.id).amount ?? 0);
+    const available = Number((await getStockRow(productId, warehouse.id)).amount ?? 0);
     if (quantity - available > 1e-9) {
       throw ApiError.badRequest(
         `Stock insuficiente de "${product.code} · ${product.description}" en ${warehouse.name} ` +
@@ -394,23 +406,23 @@ export function assertStockForSale(items: { productId: string; quantity: number 
   }
 }
 
-export function applySaleMovements(
+export async function applySaleMovements(
   voucherId: string,
   voucherCode: string,
   date: string,
   items: { productId: string; quantity: number }[],
   userId: string | null,
-): void {
+): Promise<void> {
   const affected = new Set<string>();
   for (const item of items) {
-    const product = findProduct(item.productId);
+    const product = await findProduct(item.productId);
     if (!product || !product.track_stock) continue;
     // Bodega por defecto: el establecimiento no la define en este esquema, se usa la primera bodega activa.
-    const warehouse = queryOne<{ id: string }>(
+    const warehouse = await queryOne<{ id: string }>(
       "SELECT id FROM warehouses WHERE status = 'active' ORDER BY code ASC LIMIT 1",
     );
     if (!warehouse) continue;
-    applyMovement({
+    await applyMovement({
       voucherId,
       voucherCode,
       productId: item.productId,
@@ -420,46 +432,47 @@ export function applySaleMovements(
       description: `Venta ${voucherCode}`,
       direction: 'out',
       quantity: item.quantity,
-      unitCostCents: getStockRow(item.productId, warehouse.id).avg_cost_cents,
+      unitCostCents: (await getStockRow(item.productId, warehouse.id)).avg_cost_cents,
     });
     affected.add(`${item.productId}|${warehouse.id}`);
   }
-  if (userId && affected.size) audit('stock', voucherId, 'sale', `Egreso por venta ${voucherCode}`, userId);
+  if (userId && affected.size) await audit('stock', voucherId, 'sale', `Egreso por venta ${voucherCode}`, userId);
 }
 
 export function registerInventoryRoutes(router: Router): void {
   /* --------------------------------------------------------------- bodegas */
-  router.get('/api/warehouses', 'inventory:read', () =>
-    camelAll(
-      queryAll('SELECT id, code, name, description, color, status FROM warehouses ORDER BY code ASC'),
-    ),
+  router.get('/api/warehouses', 'inventory:read', async () =>
+    camelAll(await queryAll('SELECT id, code, name, description, color, status FROM warehouses ORDER BY code ASC')),
   );
 
-  router.post('/api/warehouses', 'inventory:write', (ctx) => {
+  router.post('/api/warehouses', 'inventory:write', async (ctx) => {
     const body = bodyOf<Record<string, unknown>>(ctx);
     const code = str(body.code, 'code', { required: true, max: 20 });
-    if (queryOne('SELECT id FROM warehouses WHERE code = ?', [code])) {
+    if (await queryOne('SELECT id FROM warehouses WHERE code = ?', [code])) {
       throw ApiError.conflict('Ya existe una bodega con ese código');
     }
     const id = newId();
-    execute('INSERT INTO warehouses (id, code, name, description, color, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)', [
-      id,
-      code,
-      str(body.name, 'name', { required: true, max: 120 }),
-      str(body.description, 'description') || null,
-      str(body.color, 'color') || null,
-      'active',
-      nowIso(),
-      nowIso(),
-    ]);
-    return camel(queryOne('SELECT * FROM warehouses WHERE id = ?', [id])!);
+    await execute(
+      'INSERT INTO warehouses (id, code, name, description, color, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
+      [
+        id,
+        code,
+        str(body.name, 'name', { required: true, max: 120 }),
+        str(body.description, 'description') || null,
+        str(body.color, 'color') || null,
+        'active',
+        nowIso(),
+        nowIso(),
+      ],
+    );
+    return camel((await queryOne('SELECT * FROM warehouses WHERE id = ?', [id]))!);
   });
 
-  router.put('/api/warehouses/:id', 'inventory:write', (ctx) => {
-    const row = queryOne('SELECT * FROM warehouses WHERE id = ?', [ctx.params.id]);
+  router.put('/api/warehouses/:id', 'inventory:write', async (ctx) => {
+    const row = await queryOne('SELECT * FROM warehouses WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Bodega no encontrada');
     const body = bodyOf<Record<string, unknown>>(ctx);
-    execute('UPDATE warehouses SET name=?, description=?, color=?, status=?, updated_at=? WHERE id=?', [
+    await execute('UPDATE warehouses SET name=?, description=?, color=?, status=?, updated_at=? WHERE id=?', [
       body.name !== undefined ? str(body.name, 'name', { required: true }) : row.name,
       body.description !== undefined ? str(body.description, 'description') || null : row.description,
       body.color !== undefined ? str(body.color, 'color') || null : row.color,
@@ -467,20 +480,20 @@ export function registerInventoryRoutes(router: Router): void {
       nowIso(),
       ctx.params.id,
     ]);
-    return camel(queryOne('SELECT * FROM warehouses WHERE id = ?', [ctx.params.id])!);
+    return camel((await queryOne('SELECT * FROM warehouses WHERE id = ?', [ctx.params.id]))!);
   });
 
-  router.delete('/api/warehouses/:id', 'inventory:write', (ctx) => {
-    const stock = queryOne<{ total: number }>('SELECT COALESCE(SUM(amount),0) AS total FROM stocks WHERE warehouse_id = ?', [
+  router.delete('/api/warehouses/:id', 'inventory:write', async (ctx) => {
+    const stock = await queryOne<{ total: number }>('SELECT COALESCE(SUM(amount),0) AS total FROM stocks WHERE warehouse_id = ?', [
       ctx.params.id,
     ]);
     if (Number(stock?.total ?? 0) > 0) throw ApiError.badRequest('No se puede eliminar: la bodega tiene stock');
-    execute("UPDATE warehouses SET status = 'inactive', updated_at = ? WHERE id = ?", [nowIso(), ctx.params.id]);
+    await execute("UPDATE warehouses SET status = 'inactive', updated_at = ? WHERE id = ?", [nowIso(), ctx.params.id]);
     return { message: 'Bodega desactivada' };
   });
 
   /* ---------------------------------------------------------------- stocks */
-  router.get('/api/stocks', 'inventory:read', (ctx) => {
+  router.get('/api/stocks', 'inventory:read', async (ctx) => {
     const { page, limit, offset } = pageParams(ctx.query);
     const warehouseId = ctx.query.get('warehouseId') ?? '';
     const q = (ctx.query.get('q') ?? '').trim();
@@ -498,17 +511,17 @@ export function registerInventoryRoutes(router: Router): void {
     if (lowStock) where.push('s.amount <= p.min_stock');
     const clause = `WHERE ${where.join(' AND ')}`;
     const total =
-      queryOne<{ total: number }>(
+      (await queryOne<{ total: number }>(
         `SELECT COUNT(*) AS total FROM stocks s JOIN products p ON p.id = s.product_id ${clause}`,
         params,
-      )?.total ?? 0;
-    const rows = queryAll<Record<string, unknown>>(
+      ))?.total ?? 0;
+    const rows = await queryAll<Record<string, unknown>>(
       `SELECT s.*, p.code, p.description, p.min_stock, p.type, w.name AS warehouse_name
        FROM stocks s JOIN products p ON p.id = s.product_id JOIN warehouses w ON w.id = s.warehouse_id
        ${clause} ORDER BY p.description ASC, w.name ASC LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
-    const totals = queryOne<{ value: number }>(
+    const totals = await queryOne<{ value: number }>(
       `SELECT COALESCE(SUM(s.amount * s.avg_cost_cents),0) AS value FROM stocks s JOIN products p ON p.id = s.product_id ${clause}`,
       params,
     );
@@ -536,7 +549,7 @@ export function registerInventoryRoutes(router: Router): void {
   });
 
   /* ------------------------------------------------- comprobantes de stock */
-  router.get('/api/stock-vouchers', 'inventory:read', (ctx) => {
+  router.get('/api/stock-vouchers', 'inventory:read', async (ctx) => {
     const { page, limit, offset } = pageParams(ctx.query);
     const type = ctx.query.get('type') ?? '';
     const from = ctx.query.get('from') ?? '';
@@ -556,25 +569,26 @@ export function registerInventoryRoutes(router: Router): void {
       params.push(to);
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const total = queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM stock_vouchers ${clause}`, params)?.total ?? 0;
-    const rows = queryAll<Record<string, unknown>>(
+    const total =
+      (await queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM stock_vouchers ${clause}`, params))?.total ?? 0;
+    const rows = await queryAll<Record<string, unknown>>(
       `SELECT * FROM stock_vouchers ${clause} ORDER BY date DESC, created_at DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset],
     );
-    return paginated(rows.map(voucherDto), total, page, limit);
+    return paginated(await Promise.all(rows.map(voucherDto)), total, page, limit);
   });
 
-  router.get('/api/stock-vouchers/:id', 'inventory:read', (ctx) => {
-    const row = queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [ctx.params.id]);
+  router.get('/api/stock-vouchers/:id', 'inventory:read', async (ctx) => {
+    const row = await queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Comprobante de stock no encontrado');
-    return voucherDto(row);
+    return await voucherDto(row);
   });
 
-  router.post('/api/stock-vouchers', 'inventory:write', (ctx) => {
+  router.post('/api/stock-vouchers', 'inventory:write', async (ctx) => {
     const auth = requireUser(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const items = Array.isArray(body.items) ? (body.items as Record<string, unknown>[]) : [];
-    const voucher = createStockVoucher(
+    const voucher = await createStockVoucher(
       {
         type: str(body.type, 'type', { required: true }) as StockVoucherInput['type'],
         date: str(body.date, 'date') || undefined,
@@ -595,30 +609,32 @@ export function registerInventoryRoutes(router: Router): void {
     return voucher;
   });
 
-  router.delete('/api/stock-vouchers/:id', 'inventory:write', (ctx) => {
-    const row = queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [ctx.params.id]);
+  router.delete('/api/stock-vouchers/:id', 'inventory:write', async (ctx) => {
+    const row = await queryOne('SELECT * FROM stock_vouchers WHERE id = ?', [ctx.params.id]);
     if (!row) throw ApiError.notFound('Comprobante de stock no encontrado');
     if (String(row.type) === 'adjust') {
       throw ApiError.badRequest('No se puede eliminar un ajuste de stock; registre un nuevo ajuste');
     }
-    return transaction(() => {
-      const movements = queryAll<{ product_id: string; warehouse_id: string }>(
+    return await transaction(async () => {
+      const movements = await queryAll<{ product_id: string; warehouse_id: string }>(
         'SELECT DISTINCT product_id, warehouse_id FROM stock_movements WHERE voucher_id = ?',
         [row.id],
       );
-      execute('DELETE FROM stock_movements WHERE voucher_id = ?', [row.id]);
-      execute('DELETE FROM stock_voucher_items WHERE voucher_id = ?', [row.id]);
-      execute('DELETE FROM stock_vouchers WHERE id = ?', [row.id]);
-      for (const movement of movements) recomputeStock(String(movement.product_id), String(movement.warehouse_id));
+      await execute('DELETE FROM stock_movements WHERE voucher_id = ?', [row.id]);
+      await execute('DELETE FROM stock_voucher_items WHERE voucher_id = ?', [row.id]);
+      await execute('DELETE FROM stock_vouchers WHERE id = ?', [row.id]);
+      for (const movement of movements) {
+        await recomputeStock(String(movement.product_id), String(movement.warehouse_id));
+      }
       return { message: 'Comprobante eliminado y stock recalculado' };
     });
   });
 
-  router.post('/api/stock-vouchers/adjust', 'inventory:write', (ctx) => {
+  router.post('/api/stock-vouchers/adjust', 'inventory:write', async (ctx) => {
     const auth = requireUser(ctx);
     const body = bodyOf<Record<string, unknown>>(ctx);
     const items = Array.isArray(body.items) ? (body.items as Record<string, unknown>[]) : [];
-    return adjustStock(
+    return await adjustStock(
       {
         warehouseId: str(body.warehouseId, 'warehouseId', { required: true }),
         date: str(body.date, 'date') || undefined,
@@ -632,7 +648,7 @@ export function registerInventoryRoutes(router: Router): void {
   });
 
   /* ---------------------------------------------------------------- kardex */
-  router.get('/api/kardex', 'inventory:read', (ctx) => {
+  router.get('/api/kardex', 'inventory:read', async (ctx) => {
     const { page, limit, offset } = pageParams(ctx.query);
     const productId = ctx.query.get('productId') ?? '';
     const warehouseId = ctx.query.get('warehouseId') ?? '';
@@ -654,8 +670,9 @@ export function registerInventoryRoutes(router: Router): void {
       params.push(to);
     }
     const clause = `WHERE ${where.join(' AND ')}`;
-    const total = queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM stock_movements m ${clause}`, params)?.total ?? 0;
-    const rows = queryAll<Record<string, unknown>>(
+    const total =
+      (await queryOne<{ total: number }>(`SELECT COUNT(*) AS total FROM stock_movements m ${clause}`, params))?.total ?? 0;
+    const rows = await queryAll<Record<string, unknown>>(
       `SELECT m.*, w.name AS warehouse_name FROM stock_movements m JOIN warehouses w ON w.id = m.warehouse_id
        ${clause} ORDER BY m.date ASC, m.created_at ASC LIMIT ? OFFSET ?`,
       [...params, limit, offset],
@@ -665,13 +682,13 @@ export function registerInventoryRoutes(router: Router): void {
     let openingQty = 0;
     let openingCost = 0;
     if (from) {
-      const opening = queryOne<Record<string, unknown>>(
+      const opening = await queryOne<Record<string, unknown>>(
         `SELECT balance_qty, balance_cost_cents FROM stock_movements m ${clause} AND m.date < ?
          ORDER BY m.date DESC, m.created_at DESC LIMIT 1`,
         [...params, from],
       );
       // La consulta anterior ya filtra por from; recalculamos sin él:
-      const openingRow = queryOne<Record<string, unknown>>(
+      const openingRow = await queryOne<Record<string, unknown>>(
         `SELECT balance_qty, balance_cost_cents FROM stock_movements m
          WHERE m.product_id = ? ${warehouseId ? 'AND m.warehouse_id = ?' : ''} AND m.date < ?
          ORDER BY m.date DESC, m.created_at DESC LIMIT 1`,
@@ -681,12 +698,12 @@ export function registerInventoryRoutes(router: Router): void {
       openingQty = Number(openingRow?.balance_qty ?? 0);
       openingCost = Number(openingRow?.balance_cost_cents ?? 0);
     }
-    const totals = queryOne<Record<string, unknown>>(
-      `SELECT COALESCE(SUM(m.quantity_in),0) AS inQty, COALESCE(SUM(m.quantity_out),0) AS outQty
+    const totals = await queryOne<Record<string, unknown>>(
+      `SELECT COALESCE(SUM(m.quantity_in),0) AS "inQty", COALESCE(SUM(m.quantity_out),0) AS "outQty"
        FROM stock_movements m ${clause}`,
       params,
     );
-    const closingQty = openingQty + Number(totals?.inQty ?? 0) - Number(totals?.outQty ?? 0);
+    const closingQty = openingQty + Number(totals?.["inQty"] ?? 0) - Number(totals?.["outQty"] ?? 0);
 
     return {
       ...paginated(
@@ -715,14 +732,14 @@ export function registerInventoryRoutes(router: Router): void {
       summary: {
         openingQty,
         openingCostCents: openingCost,
-        inQty: Number(totals?.inQty ?? 0),
-        outQty: Number(totals?.outQty ?? 0),
+        inQty: Number(totals?.["inQty"] ?? 0),
+        outQty: Number(totals?.["outQty"] ?? 0),
         closingQty,
       },
     };
   });
 
-  router.get('/api/kardex/export', 'inventory:read', (ctx) => {
+  router.get('/api/kardex/export', 'inventory:read', async (ctx) => {
     const productId = ctx.query.get('productId') ?? '';
     if (!productId) throw ApiError.badRequest('El parámetro productId es obligatorio');
     const warehouseId = ctx.query.get('warehouseId') ?? '';
@@ -742,7 +759,7 @@ export function registerInventoryRoutes(router: Router): void {
       clause += ' AND m.date <= ?';
       params.push(to);
     }
-    const rows = queryAll<Record<string, unknown>>(
+    const rows = await queryAll<Record<string, unknown>>(
       `SELECT m.*, p.code AS product_code, p.description AS product_description, w.name AS warehouse_name
        FROM stock_movements m JOIN products p ON p.id = m.product_id JOIN warehouses w ON w.id = m.warehouse_id
        ${clause} ORDER BY m.date ASC, m.created_at ASC`,
@@ -771,5 +788,4 @@ export function registerInventoryRoutes(router: Router): void {
     };
   });
 }
-
 

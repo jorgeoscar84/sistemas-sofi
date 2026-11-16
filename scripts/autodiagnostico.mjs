@@ -27,9 +27,9 @@ const includeSri = args.includes('--sri');
 const keepTemp = args.includes('--keep');
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fe-autotest-'));
 
-process.env.DB_PATH = path.join(tmpDir, 'legacy.db');
-process.env.PLATFORM_DB_PATH = path.join(tmpDir, 'platform.db');
-process.env.TENANTS_DIR = path.join(tmpDir, 'tenants');
+process.env.DB_DRIVER = process.env.DATABASE_URL ? 'postgres' : 'pglite';
+process.env.STORAGE_DIR = path.join(tmpDir, 'storage');
+process.env.CERT_DIR = path.join(tmpDir, 'storage', 'certs');
 process.env.JWT_SECRET = 'autotest-secret';
 process.env.PORT = '0';
 
@@ -112,7 +112,7 @@ try {
   server = started.server;
 
   // Superadministrador inicial de la plataforma temporal.
-  db.pExec(
+  await db.pExec(
     'INSERT INTO platform_users (id, company_id, username, password_hash, name, email, role, permissions, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     [newId(), null, 'autotest_super', hashPassword('autotest123'), 'Super Auto', 'auto@test.ec', 'superadmin', '[]', 'active', db.nowIso(), db.nowIso()],
   );
@@ -605,7 +605,7 @@ try {
     await new Promise((resolve) => server.close(resolve));
   }
   try {
-    db.closeDatabases();
+    await db.closeDatabases();
   } catch {
     /* ignore */
   }
@@ -619,6 +619,7 @@ try {
     console.log(`Datos temporales conservados en ${tmpDir}`);
   }
 }
+
 
 
 
