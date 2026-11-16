@@ -97,7 +97,7 @@ migran ni ejecutan el seed destructivo (`seed` solo crea datos si la plataforma 
 
 Pruebas locales ejecutadas antes del despliegue:
 
-- `npm test` → **21/21**.
+- `npm test` → **22/22**.
 - `npm run autodiagnostico` → **29/29** (con PGlite, sin tocar la base real).
 - `tsc -p tsconfig.check.json` → sin errores.
 
@@ -137,5 +137,6 @@ Pruebas locales ejecutadas antes del despliegue:
 - **Contabilidad**: se hará sobre PostgreSQL relacional, no sobre MongoDB.
 - Rotar las credenciales expuestas durante las pruebas (Brevo, SMTP, contraseñas
   temporales) y mover la clave de PostgreSQL a un gestor de secretos.
+
 
 

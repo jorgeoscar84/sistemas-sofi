@@ -44,12 +44,12 @@ La autorización real necesita un certificado emitido por una entidad autorizada
 ## 2. Pruebas automáticas del núcleo
 
 ```bash
-npm test                      # 21 pruebas
+npm test                      # 22 pruebas
 npm run verify:signature      # firma XAdES de los 5 comprobantes con SHA-1 (local + JDK)
 npm run verify:signature:sha256
 ```
 
-Resultado esperado: `21/21` y `RESULTADO: todos los comprobantes tienen firma XAdES válida`.
+Resultado esperado: `22/22` y `RESULTADO: todos los comprobantes tienen firma XAdES válida`.
 
 ## 3. Prueba manual en la interfaz (checklist)
 
@@ -106,7 +106,7 @@ Entra en `http://127.0.0.1:4000` con el usuario que corresponda.
 ## 5. Qué ya está validado (evidencia)
 
 - **31/31** comprobaciones del autodiagnóstico (con SRI real).
-- **21/21** pruebas del núcleo.
+- **22/22** pruebas del núcleo.
 - Firma XAdES-BES de factura, nota de crédito, nota de débito, retención y guía validada con el
   **validador XMLDSig del JDK** (SHA-1 y SHA-256).
 - Emisión real contra `celcer.sri.gob.ec`: HTTP 200, firma válida, respuesta del SRI registrada.
@@ -119,5 +119,6 @@ Entra en `http://127.0.0.1:4000` con el usuario que corresponda.
 - `npm run autodiagnostico` usa una base temporal; tu información no se modifica.
 - `npm run backup` respalda plataforma y empresas reales antes de cualquier prueba con datos propios.
 - Para reiniciar los datos demo: `npm run seed -- --force` (borra todo lo existente).
+
 
 

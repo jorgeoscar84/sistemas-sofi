@@ -114,7 +114,7 @@ verificación de firma y las interacciones con el SRI.
 | `npm run seed` | Crea la plataforma y las empresas demo (no borra datos si ya existen) |
 | `npm run seed -- --force` | **Borra** bases de plataforma/empresas y vuelve a sembrar |
 | `npm start` | Inicia API + frontend |
-| `npm test` | Pruebas del núcleo (21) |
+| `npm test` | Pruebas del núcleo (22) |
 | `npm run autodiagnostico` | Autodiagnóstico aislado de todo el sistema (no toca tus datos) |
 | `npm run autodiagnostico:sri` | Autodiagnóstico + conectividad y emisión real contra el SRI |
 | `npm run verify:signature` | Valida la firma de los 5 comprobantes con el XMLDSig del JDK |
@@ -145,7 +145,7 @@ El superadministrador opera sobre una empresa enviando la cabecera `X-Company-Id
 - `npm run autodiagnostico` levanta una instancia aislada y verifica plataforma, licencia, catálogo,
   inventario, factura, notas, guía, retención, usuarios, aislamiento, certificado y firma.
 - `npm run autodiagnostico:sri` incluye conectividad y emisión real contra el SRI (requiere internet).
-- Resultado actual: **29/29** verificaciones del autodiagnóstico (31/31 con SRI real) y **21/21** pruebas del núcleo.
+- Resultado actual: **29/29** verificaciones del autodiagnóstico (31/31 con SRI real) y **22/22** pruebas del núcleo.
 
 ## Respaldo y despliegue
 
@@ -248,6 +248,7 @@ La plataforma usa **PostgreSQL 18** con un **schema por empresa** (`tenant_<id>`
 `platform` para licencias/usuarios. La aplicación usa un pool `pg` y fija `search_path` por
 consulta/transacción; el aislamiento no depende de un filtro manual. Ver el runbook de migración
 para respaldo, rollback y operación.
+
 
 
 

@@ -33,6 +33,8 @@ const {
   signXml,
   signingMaterialFromP12,
   verifySignedXml,
+  SimplePdf,
+  encodeWinAnsi,
 } = await import('../../../packages/sri/src/index.ts');
 const { expandRc2Key, rc2DecryptBlock, rc2EncryptBlock } = await import('../../../packages/sri/src/rc2.ts');
 const { centsFromInput } = await import('../../web/static/lib.js');
@@ -262,6 +264,17 @@ test('factura respeta precio e IVA editados del producto aunque el catálogo ten
   assert.equal(voucher.status, 200);
   assert.equal(voucher.data.totalCents, 45310);
   assert.equal(voucher.data.items[0].unitPriceCents, 39400);
+});
+
+test('RIDE: codificación WinAnsi conserva tildes y eñes', () => {
+  assert.equal(encodeWinAnsi('MUÑIZ'), 'MUÑIZ');
+  assert.equal(encodeWinAnsi('€ “ ”'), '\x80 \x93 \x94');
+  const pdf = new SimplePdf();
+  pdf.text(40, 40, 'JORGE MUÑIZ OSCAR · Dirección · PRODUCCIÓN · AUTORIZACIÓN', { size: 10 });
+  const bytes = pdf.build();
+  assert.ok(bytes.includes(Buffer.from([0x4d, 0x55, 0xd1, 0x49, 0x5a])), 'debe contener MUÑIZ en WinAnsi');
+  assert.ok(!bytes.includes(Buffer.from([0xc3, 0x91])), 'no debe contener la Ñ codificada como UTF-8');
+  assert.ok(bytes.includes(Buffer.from([0xf3, 0x6e])), 'debe contener ó+n de Dirección');
 });
 
 test('segunda factura usa el siguiente secuencial', async () => {
@@ -825,6 +838,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 
 
 

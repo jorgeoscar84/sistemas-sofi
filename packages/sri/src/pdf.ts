@@ -36,9 +36,62 @@ const FONT_REFS: Record<FontName, string> = {
   'Courier-Bold': 'F4',
 };
 
-/** Codifica texto UTF-8 a WinAnsi (latin-1) y escapa caracteres del PDF. */
+/**
+ * Caracteres Unicode que WinAnsiEncoding coloca fuera de Latin-1.
+ * https://www.adobe.com/content/dam/acom/en/devnet/pdf/PDF32000_2008.pdf (D.2)
+ */
+const WIN_ANSI_EXTRA: Record<string, number> = {
+  '€': 0x80,
+  '‚': 0x82,
+  'ƒ': 0x83,
+  '„': 0x84,
+  '…': 0x85,
+  '†': 0x86,
+  '‡': 0x87,
+  'ˆ': 0x88,
+  '‰': 0x89,
+  'Š': 0x8a,
+  '‹': 0x8b,
+  'Œ': 0x8c,
+  'Ž': 0x8e,
+  '‘': 0x91,
+  '’': 0x92,
+  '“': 0x93,
+  '”': 0x94,
+  '•': 0x95,
+  '–': 0x96,
+  '—': 0x97,
+  '˜': 0x98,
+  '™': 0x99,
+  'š': 0x9a,
+  '›': 0x9b,
+  'œ': 0x9c,
+  'ž': 0x9e,
+  'Ÿ': 0x9f,
+};
+
+/**
+ * Convierte texto Unicode a los bytes de WinAnsiEncoding que usa el PDF.
+ * No se debe pasar por UTF-8: el PDF escribe los bytes del string tal cual.
+ */
+export function encodeWinAnsi(text: string): string {
+  let out = '';
+  for (const char of text.normalize('NFC')) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0xff) {
+      out += String.fromCharCode(code);
+    } else if (WIN_ANSI_EXTRA[char] !== undefined) {
+      out += String.fromCharCode(WIN_ANSI_EXTRA[char]!);
+    } else {
+      out += '?';
+    }
+  }
+  return out;
+}
+
+/** Codifica texto a WinAnsi y escapa los caracteres especiales del PDF. */
 function pdfText(text: string): string {
-  const encoded = Buffer.from(text, 'utf8').toString('latin1');
+  const encoded = encodeWinAnsi(text);
   return encoded.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
