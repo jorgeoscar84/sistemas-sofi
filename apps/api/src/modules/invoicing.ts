@@ -407,14 +407,16 @@ export async function createVoucher(input: CreateVoucherInput, userId: string | 
     if (item.productId && !product) throw ApiError.badRequest(`Producto no encontrado: ${item.productId}`);
     const quantity = Number(item.quantity);
     if (!Number.isFinite(quantity) || quantity <= 0) throw ApiError.badRequest('La cantidad de cada ítem debe ser mayor a 0');
-    const unitPrice = product
-      ? product.price_cents
-      : Math.round(Number(item.unitPriceCents ?? 0));
+    // La UI permite editar el precio y el IVA del producto; si vienen explícitos,
+    // mandan sobre el catálogo. Si no, se usa el precio/IVA configurado del producto.
+    const hasUnitPrice = item.unitPriceCents !== undefined && item.unitPriceCents !== null;
+    const rawUnitPrice = hasUnitPrice ? Number(item.unitPriceCents) : product?.price_cents ?? 0;
+    const unitPrice = Number.isFinite(rawUnitPrice) ? Math.round(rawUnitPrice) : 0;
     if (unitPrice < 0) throw ApiError.badRequest('El precio unitario no puede ser negativo');
     const discount = Math.max(0, Math.round(Number(item.discountCents ?? 0)));
     const subtotal = Math.round(unitPrice * quantity) - discount;
     if (subtotal < 0) throw ApiError.badRequest('El descuento no puede superar el subtotal del ítem');
-    const ivaCode = product ? product.iva_code : item.ivaCode ?? '4';
+    const ivaCode = item.ivaCode ? String(item.ivaCode) : product ? product.iva_code : '4';
     const rate = ivaRate(ivaCode);
     const tax = Math.round(subtotal * rate);
     const taxes: TaxLine[] = [

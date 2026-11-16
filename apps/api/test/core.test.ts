@@ -239,6 +239,31 @@ test('emitir factura en modo mock: clave de acceso, totales y stock', async () =
   assert.equal(lastRow.balanceQty, 18);
 });
 
+test('factura respeta precio e IVA editados del producto aunque el catálogo tenga precio 0', async () => {
+  const product = await api(
+    'POST',
+    '/api/products',
+    { type: 'service', code: 'TEST-EDIT', description: 'Comisión con precio editado', priceCents: 0, ivaCode: '4' },
+    token,
+  );
+  assert.equal(product.status, 200);
+  const voucher = await api(
+    'POST',
+    '/api/vouchers',
+    {
+      docType: '01',
+      clientId: ids.clientId,
+      draft: true,
+      items: [{ productId: product.data.id, quantity: 1, unitPriceCents: 39400, ivaCode: '4' }],
+      payments: [{ method: 'efectivo', amountCents: 45310 }],
+    },
+    token,
+  );
+  assert.equal(voucher.status, 200);
+  assert.equal(voucher.data.totalCents, 45310);
+  assert.equal(voucher.data.items[0].unitPriceCents, 39400);
+});
+
 test('segunda factura usa el siguiente secuencial', async () => {
   const invoice = await api(
     'POST',
@@ -800,6 +825,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 
 
 
