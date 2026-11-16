@@ -104,7 +104,7 @@ export function generarRidePdf(model: RideModel): Buffer {
   });
 
   const rightX = 314;
-  const rightValueX = RIGHT - 8;
+  const rightValueX = RIGHT - 14;
   const row = (label: string, value: string, top: number, valueSize = 7, valueFont: 'Helvetica' | 'Helvetica-Bold' | 'Courier' | 'Courier-Bold' = 'Helvetica') => {
     pdf.text(rightX, top, label, { size: 6.5, font: 'Helvetica-Bold' });
     pdf.textRight(rightValueX, top, truncate(value, 60), { size: valueSize, font: valueFont });
@@ -112,8 +112,8 @@ export function generarRidePdf(model: RideModel): Buffer {
   row('RUC.:', model.company.ruc, y + 18, 8, 'Helvetica-Bold');
   row('FACTURA N.', model.number, y + 35, 8, 'Courier-Bold');
   row('FECHA AUTORIZACIÓN:', formatAuthDate(model.authorizationDate), y + 52, 6.2);
-  row('AMBIENTE:', environmentShort(model.environmentLabel), y + 69, 7);
-  row('EMISIÓN:', model.emissionLabel ?? 'NORMAL', y + 86, 7);
+  row('AMBIENTE:', environmentShort(model.environmentLabel), y + 69, 6.8);
+  row('EMISIÓN:', model.emissionLabel ?? 'NORMAL', y + 86, 6.8);
 
   // Los códigos de 49 dígitos necesitan su propio renglón para no truncarse.
   pdf.text(rightX, y + 106, 'NÚMERO DE AUTORIZACIÓN:', { size: 6.2, font: 'Helvetica-Bold' });
@@ -154,17 +154,17 @@ export function generarRidePdf(model: RideModel): Buffer {
   y = clientTop + clientHeight + 10;
 
   /* --------------------------------------------------------------- detalle */
-  const COL = { code: 36, desc: 102, unit: 318, qty: 358, price: 404, discount: 470, total: 505, right: RIGHT };
+  const COL = { code: 36, desc: 96, unit: 300, qty: 340, price: 390, discount: 466, total: 500, right: RIGHT };
   const tableHeaderTop = y;
   pdf.box(MARGIN, tableHeaderTop, CONTENT_WIDTH, 16, 0.92);
   const headerY = tableHeaderTop + 11;
-  pdf.text(COL.code + 3, headerY, 'Código', { size: 6.5, font: 'Helvetica-Bold' });
-  pdf.text(COL.desc + 3, headerY, 'Descripción', { size: 6.5, font: 'Helvetica-Bold' });
-  pdf.text(COL.unit + 3, headerY, 'Med.', { size: 6.5, font: 'Helvetica-Bold' });
-  pdf.textRight(COL.qty + 42, headerY, 'Cantidad', { size: 6.5, font: 'Helvetica-Bold' });
-  pdf.textRight(COL.price + 60, headerY, 'Precio Unitario', { size: 6.5, font: 'Helvetica-Bold' });
-  pdf.textRight(COL.discount + 30, headerY, 'Dto.', { size: 6.5, font: 'Helvetica-Bold' });
-  pdf.textRight(COL.right - 3, headerY, 'Total', { size: 6.5, font: 'Helvetica-Bold' });
+  pdf.text(COL.code + 4, headerY, 'Código', { size: 6.5, font: 'Helvetica-Bold' });
+  pdf.text(COL.desc + 4, headerY, 'Descripción', { size: 6.5, font: 'Helvetica-Bold' });
+  pdf.text(COL.unit + 4, headerY, 'Med.', { size: 6.5, font: 'Helvetica-Bold' });
+  pdf.textRight(COL.qty + 46, headerY, 'Cantidad', { size: 6.5, font: 'Helvetica-Bold' });
+  pdf.textRight(COL.price + 72, headerY, 'Precio Unitario', { size: 6.2, font: 'Helvetica-Bold' });
+  pdf.textRight(COL.discount + 32, headerY, 'Dto.', { size: 6.5, font: 'Helvetica-Bold' });
+  pdf.textRight(COL.right - 4, headerY, 'Total', { size: 6.5, font: 'Helvetica-Bold' });
   y += 16;
 
   for (const item of model.items) {
@@ -174,24 +174,28 @@ export function generarRidePdf(model: RideModel): Buffer {
     }
     pdf.hline(MARGIN, RIGHT, y + 4, 0.35);
     const rowY = y + 14;
-    pdf.text(COL.code + 3, rowY, truncate(item.codigo, 14), { size: 6.8 });
-    pdf.text(COL.desc + 3, rowY, truncate(item.descripcion, 44), { size: 6.8 });
-    pdf.text(COL.unit + 3, rowY, truncate(item.unidad || 'Unidad', 10), { size: 6.5 });
-    pdf.textRight(COL.qty + 42, rowY, trimNum(item.cantidad), { size: 6.8 });
-    pdf.textRight(COL.price + 60, rowY, money6(item.precioUnitario), { size: 6.8 });
-    pdf.textRight(COL.discount + 30, rowY, money2(item.descuento), { size: 6.8 });
-    pdf.textRight(COL.right - 3, rowY, money2(item.subtotal), { size: 6.8, font: 'Helvetica-Bold' });
+    pdf.text(COL.code + 4, rowY, truncate(item.codigo, 14), { size: 6.8 });
+    pdf.text(COL.desc + 4, rowY, truncate(item.descripcion, 46), { size: 6.8 });
+    pdf.text(COL.unit + 4, rowY, truncate(item.unidad || 'Unidad', 10), { size: 6.5 });
+    pdf.textRight(COL.qty + 46, rowY, trimNum(item.cantidad), { size: 6.8 });
+    pdf.textRight(COL.price + 72, rowY, money6(item.precioUnitario), { size: 6.8 });
+    pdf.textRight(COL.discount + 32, rowY, money2(item.descuento), { size: 6.8 });
+    pdf.textRight(COL.right - 4, rowY, money2(item.subtotal), { size: 6.8, font: 'Helvetica-Bold' });
     y += 18;
   }
   pdf.hline(MARGIN, RIGHT, y + 4, 0.7);
-  y += 10;
-  pdf.vline(COL.code, tableHeaderTop, y + 4, 0.35);
-  pdf.vline(COL.desc, tableHeaderTop, y + 4, 0.35);
-  pdf.vline(COL.unit, tableHeaderTop, y + 4, 0.35);
-  pdf.vline(COL.qty, tableHeaderTop, y + 4, 0.35);
-  pdf.vline(COL.price, tableHeaderTop, y + 4, 0.35);
-  pdf.vline(COL.discount, tableHeaderTop, y + 4, 0.35);
-  pdf.vline(COL.total, tableHeaderTop, y + 4, 0.35);
+  pdf.hline(MARGIN, RIGHT, tableHeaderTop, 0.7);
+  const tableBottom = y + 4;
+  pdf.vline(MARGIN, tableHeaderTop, tableBottom, 0.7);
+  pdf.vline(RIGHT, tableHeaderTop, tableBottom, 0.7);
+  pdf.vline(COL.code, tableHeaderTop, tableBottom, 0.35);
+  pdf.vline(COL.desc, tableHeaderTop, tableBottom, 0.35);
+  pdf.vline(COL.unit, tableHeaderTop, tableBottom, 0.35);
+  pdf.vline(COL.qty, tableHeaderTop, tableBottom, 0.35);
+  pdf.vline(COL.price, tableHeaderTop, tableBottom, 0.35);
+  pdf.vline(COL.discount, tableHeaderTop, tableBottom, 0.35);
+  pdf.vline(COL.total, tableHeaderTop, tableBottom, 0.35);
+  y = tableBottom + 6;
 
   /* ---------------------------------------------------------------- totales */
   const taxBase5 = taxBase(model, (tax) => near(tax.tarifa, 0.05));
