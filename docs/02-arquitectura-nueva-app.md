@@ -34,7 +34,7 @@ facturacion-ec/
 │   │   │   ├── seed.ts          # datos de demostración
 │   │   │   ├── db/schema.sql    # esquema PostgreSQL por tenant
 │   │   │   └── modules/         # auth, company, clients, catalog, inventory, invoicing, dashboard, integration
-│   │   └── test/core.test.ts    # 19 pruebas (node:test, PGlite)
+│   │   └── test/core.test.ts    # 20 pruebas (node:test, PGlite)
 │   └── web/static/              # SPA sin build
 │       ├── index.html, styles.css, app.js, lib.js
 │       └── pages/               # dashboard, clients, catalog, inventory, admin, invoicing, quick, pos
@@ -192,3 +192,4 @@ Los usuarios normales siempre quedan fijados a su empresa; la cabecera se ignora
 
 - `npm run backup` respalda la plataforma y todas las empresas (con `VACUUM INTO` para copias consistentes).
 - Una instalación por VPS o una instancia central con varias empresas usan el mismo código.
+

@@ -35,6 +35,7 @@ const {
   verifySignedXml,
 } = await import('../../../packages/sri/src/index.ts');
 const { expandRc2Key, rc2DecryptBlock, rc2EncryptBlock } = await import('../../../packages/sri/src/rc2.ts');
+const { centsFromInput } = await import('../../web/static/lib.js');
 
 let server: { close: (cb: () => void) => void };
 let baseUrl = '';
@@ -85,6 +86,15 @@ before(async () => {
 after(async () => {
   server?.close(() => undefined);
   await closeDatabases();
+});
+
+test('entrada monetaria acepta coma y punto decimal', () => {
+  assert.equal(centsFromInput('453,10'), 45310);
+  assert.equal(centsFromInput('453.10'), 45310);
+  assert.equal(centsFromInput('1.234,56'), 123456);
+  assert.equal(centsFromInput('1,234.56'), 123456);
+  assert.equal(centsFromInput('1.234'), 123400);
+  assert.equal(centsFromInput(''), 0);
 });
 
 test('clave de acceso: 49 dígitos y módulo 11 válido', () => {
@@ -790,6 +800,7 @@ test('el rechazo por stock no crea comprobante ni consume secuencial', async () 
   assert.equal(invoice.data.status, 'issued');
   assert.equal(invoice.data.totalCents, 1150);
 });
+
 
 
 

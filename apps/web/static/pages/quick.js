@@ -240,7 +240,7 @@ export async function render(root, ctx) {
             )}
           </div>
           <div class="form-grid mt-16">
-            ${field('Monto recibido', '<input type="number" min="0" step="0.01" id="quick-received" placeholder="Opcional; vacío = pago exacto" />', {
+            ${field('Monto recibido', '<input type="text" inputmode="decimal" autocomplete="off" id="quick-received" placeholder="Opcional; vacío = pago exacto" />', {
               full: true,
             })}
           </div>
@@ -353,8 +353,8 @@ export async function render(root, ctx) {
             (item) => `<tr data-item-key="${esc(item.key)}">
               <td><div class="mono small muted">${esc(item.code)}</div><div>${esc(item.description)}</div></td>
               <td><input type="number" min="0.01" step="0.01" data-item-field="quantity" value="${esc(String(item.quantity))}" /></td>
-              <td><input type="number" min="0" step="0.01" data-item-field="price" value="${lineInputValue(item.unitPriceCents)}" /></td>
-              <td><input type="number" min="0" step="0.01" data-item-field="discount" value="${lineInputValue(item.discountCents)}" /></td>
+              <td><input type="text" inputmode="decimal" autocomplete="off" data-item-field="price" value="${lineInputValue(item.unitPriceCents)}" /></td>
+              <td><input type="text" inputmode="decimal" autocomplete="off" data-item-field="discount" value="${lineInputValue(item.discountCents)}" /></td>
               <td class="num" data-item-total>${money(lineAmounts(item, options).totalCents)}</td>
               <td class="right"><button class="btn ghost sm" type="button" data-remove-item title="Quitar">✕</button></td>
             </tr>`,
@@ -504,3 +504,4 @@ export async function render(root, ctx) {
   renderItems();
   renderTotals();
 }
+

@@ -810,8 +810,8 @@ async function renderCreate(root, ctx) {
               <td><div class="mono small muted">${esc(line.code || '')}</div><div>${esc(line.description)}</div></td>
               <td><select data-line-field="ivaCode" style="min-width:120px">${ivaOptionsHtml(line.ivaCode)}</select></td>
               <td><input type="number" min="0.01" step="0.01" data-line-field="quantity" value="${esc(String(line.quantity))}" /></td>
-              <td><input type="number" min="0" step="0.01" data-line-field="unitPrice" value="${lineInputValue(line.unitPriceCents)}" /></td>
-              <td><input type="number" min="0" step="0.01" data-line-field="discount" value="${lineInputValue(line.discountCents)}" /></td>
+              <td><input type="text" inputmode="decimal" autocomplete="off" data-line-field="unitPrice" value="${lineInputValue(line.unitPriceCents)}" /></td>
+              <td><input type="text" inputmode="decimal" autocomplete="off" data-line-field="discount" value="${lineInputValue(line.discountCents)}" /></td>
               <td class="num" data-line-total>${money(lineAmounts(line, options).totalCents)}</td>
               <td class="right"><button class="btn ghost sm" type="button" data-remove-line title="Quitar ítem">✕</button></td>
             </tr>`,
@@ -871,7 +871,7 @@ async function renderCreate(root, ctx) {
       .map(
         (payment, index) => `<div class="inline" data-payment-index="${index}" style="margin-bottom:8px">
           <select class="grow" data-payment-field="method">${paymentSelectOptions(options, payment.method)}</select>
-          <input type="number" min="0" step="0.01" style="max-width:150px" data-payment-field="amount" value="${lineInputValue(payment.amountCents)}" />
+          <input type="text" inputmode="decimal" autocomplete="off" style="max-width:150px" data-payment-field="amount" value="${lineInputValue(payment.amountCents)}" />
           <button class="btn ghost sm" type="button" data-remove-payment title="Quitar pago">✕</button>
         </div>`,
       )
@@ -1662,8 +1662,8 @@ async function renderNoteCreate(root, ctx) {
                   <td><div class="mono small muted">${esc(line.code)}</div><div>${esc(line.description)}</div></td>
                   <td class="num muted">${fmtQty(line.maxQuantity)}</td>
                   <td><input type="number" min="0.01" step="0.01" data-note-field="quantity" value="${esc(String(line.quantity))}" /></td>
-                  <td><input type="number" min="0" step="0.01" data-note-field="unitPrice" value="${lineInputValue(line.unitPriceCents)}" /></td>
-                  <td><input type="number" min="0" step="0.01" data-note-field="discount" value="${lineInputValue(line.discountCents)}" /></td>
+                  <td><input type="text" inputmode="decimal" autocomplete="off" data-note-field="unitPrice" value="${lineInputValue(line.unitPriceCents)}" /></td>
+                  <td><input type="text" inputmode="decimal" autocomplete="off" data-note-field="discount" value="${lineInputValue(line.discountCents)}" /></td>
                   <td class="num" data-note-total>${money(lineAmounts(line, options).totalCents)}</td>
                   <td class="right"><button class="btn ghost sm" type="button" data-remove-note-line title="Quitar ítem">✕</button></td>
                 </tr>`,
@@ -1781,3 +1781,4 @@ async function renderNoteCreate(root, ctx) {
   renderTotals();
   reasonInput.focus();
 }
+

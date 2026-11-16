@@ -413,7 +413,7 @@ export async function render(root, ctx) {
           <select class="grow" data-payment-field="method">${paymentMethods(options)
             .map((method) => option(method.id, method.description, method.id === payment.method))
             .join('')}</select>
-          <input type="number" min="0" step="0.01" style="max-width:140px" data-payment-field="amount" value="${lineInputValue(payment.amountCents)}" />
+          <input type="text" inputmode="decimal" autocomplete="off" style="max-width:140px" data-payment-field="amount" value="${lineInputValue(payment.amountCents)}" />
           <button class="btn ghost sm" type="button" data-remove-payment title="Quitar pago">✕</button>
         </div>`,
       )
@@ -628,3 +628,4 @@ function withBusy(button, fn) {
       }
     });
 }
+

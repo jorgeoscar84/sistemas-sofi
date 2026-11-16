@@ -153,8 +153,30 @@ export function money(centsValue, symbol = true) {
 
 export function centsFromInput(value) {
   if (value === null || value === undefined || value === '') return 0;
-  const normalized = String(value).replace(/,/g, '').trim();
-  const number = Number(normalized);
+  let text = String(value).trim().replace(/\s+/g, '');
+  if (!text) return 0;
+  const lastComma = text.lastIndexOf(',');
+  const lastDot = text.lastIndexOf('.');
+  if (lastComma !== -1 && lastDot !== -1) {
+    // Formato 1.234,56 o 1,234.56: el último separador es el decimal.
+    text = lastComma > lastDot
+      ? text.replace(/\./g, '').replace(',', '.')
+      : text.replace(/,/g, '');
+  } else if (lastComma !== -1) {
+    const parts = text.split(',');
+    // 453,10 = decimal; 1,234 = miles; 1,234,567 = miles.
+    text = parts.length > 2 || (parts.length === 2 && parts[1].length === 3 && parts[0] !== '0')
+      ? parts.join('')
+      : parts.join('.');
+  } else if ((text.match(/\./g) || []).length > 1) {
+    // 1.234.567: puntos de miles.
+    text = text.replace(/\./g, '');
+  } else {
+    const parts = text.split('.');
+    // 1.234 = miles en formato es-EC; 394.10 = decimal.
+    if (parts.length === 2 && parts[1].length === 3 && parts[0] !== '0') text = parts.join('');
+  }
+  const number = Number(text);
   return Number.isFinite(number) ? Math.round(number * 100) : 0;
 }
 
