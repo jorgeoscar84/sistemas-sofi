@@ -123,6 +123,9 @@ class PgBackend implements Backend {
     if (!config.databaseUrl) {
       throw new Error('DATABASE_URL no configurada para PostgreSQL');
     }
+    // COUNT/SUM de PostgreSQL llegan como int8/numeric (string); la API usa números.
+    pg.types.setTypeParser(20, (value: string) => Number(value));
+    pg.types.setTypeParser(1700, (value: string) => Number(value));
     this.pool = new pg.Pool({ connectionString: config.databaseUrl, max: config.dbPoolMax });
   }
 
