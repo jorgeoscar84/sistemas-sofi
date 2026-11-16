@@ -4,19 +4,21 @@ Aplicación de facturación electrónica para Ecuador inspirada en la arquitectu
 en [`01-arquitectura-servicio-upconta.md`](01-arquitectura-servicio-upconta.md).
 
 > **Decisión de implementación (importante):** el entorno de trabajo no permitía instalar paquetes de npm
-> de forma fiable, por lo que la aplicación final se implementó **sin dependencias externas** usando sólo
-> capacidades nativas de Node.js 24. Esto la hace ejecutable y verificable en cualquier máquina.
+> de forma fiable, por lo que la primera versión se implementó **sin dependencias externas** usando sólo
+> capacidades nativas de Node.js 24. **Actualización 2026-11-16:** la persistencia fue migrada a
+> **PostgreSQL 18** con `pg`; el resto del stack nativo se conserva. Ver
+> [`06-migracion-postgresql.md`](06-migracion-postgresql.md).
 
 ## Stack final
 
 | Capa | Tecnología |
 |---|---|
-| Backend | Node.js 24 nativo: `node:http` (router propio), `node:sqlite`, `node:crypto`, TypeScript ejecutado nativamente |
+| Backend | Node.js 24 nativo: `node:http` (router propio), `pg` (PostgreSQL), `node:crypto`, TypeScript ejecutado nativamente |
 | Autenticación | JWT HS256 propio + hash `scrypt` + tokens de integración (`ApiToken`) + roles/permisos |
 | XML/firma | Paquete `packages/sri`: XML SRI, **XAdES-BES** con `node:crypto`, cliente SOAP por `fetch`, RIDE PDF propio |
 | Frontend | SPA *vanilla JS* (ESM) servida estáticamente: router hash, componentes propios, CSS propio |
-| Base de datos | SQLite (`data/facturacion.db`), dinero en **centavos enteros** |
-| Build | **Ninguno** (no hace falta compilar ni instalar) |
+| Base de datos | PostgreSQL 18, **schema por empresa** (`tenant_<id>`) + schema `platform`, dinero en **centavos enteros** |
+| Build | Dockerfile con `npm ci --omit=dev` (solo `pg` en producción) |
 
 ## Estructura real
 
@@ -27,12 +29,12 @@ facturacion-ec/
 │   │   ├── src/
 │   │   │   ├── server.ts        # arranque: API + frontend estático
 │   │   │   ├── http.ts          # router, JWT, permisos, respuestas, archivos
-│   │   │   ├── db.ts            # wrapper node:sqlite + auditoría
+│   │   │   ├── db.ts            # capa PostgreSQL async + auditoría + contexto de tenant
 │   │   │   ├── config.ts        # configuración por variables de entorno
 │   │   │   ├── seed.ts          # datos de demostración
-│   │   │   ├── db/schema.sql    # esquema completo
+│   │   │   ├── db/schema.sql    # esquema PostgreSQL por tenant
 │   │   │   └── modules/         # auth, company, clients, catalog, inventory, invoicing, dashboard, integration
-│   │   └── test/core.test.ts    # 12 pruebas (node:test)
+│   │   └── test/core.test.ts    # 19 pruebas (node:test, PGlite)
 │   └── web/static/              # SPA sin build
 │       ├── index.html, styles.css, app.js, lib.js
 │       └── pages/               # dashboard, clients, catalog, inventory, admin, invoicing, quick, pos
@@ -153,15 +155,15 @@ el documento y el XML se reconstruye desde ellos al emitir.
 
 ### Decisión de arquitectura
 
-Se pasó de una instalación monoempresa a una **plataforma multiempresa** con aislamiento físico:
+Se pasó de una instalación monoempresa a una **plataforma multiempresa** con aislamiento por schema:
 
-- `data/platform.db`: usuarios globales, empresas/licencias, tokens de API y auditoría de plataforma.
-- `data/tenants/<id>.db`: una base SQLite por empresa con **todos** sus datos (configuración, catálogo,
+- `platform`: usuarios globales, empresas/licencias, tokens de API y auditoría de plataforma.
+- `tenant_<id>`: schema PostgreSQL por empresa con **todos** sus datos (configuración, catálogo,
   inventario, comprobantes, certificado, bitácora SRI y auditoría).
 
 El contexto de empresa se propaga por petición con `AsyncLocalStorage` (`db.ts`): el router autentica,
-resuelve la empresa activa y abre la base correspondiente. Ningún módulo de negocio necesita reescribir
-sus consultas para filtrar por empresa; no puede acceder a otra base por diseño.
+resuelve la empresa activa y fija el `search_path` correspondiente. Ningún módulo de negocio necesita
+filtrar manualmente por empresa; no puede acceder a otro schema por diseño.
 
 ### Roles y acceso
 

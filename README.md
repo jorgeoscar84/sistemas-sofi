@@ -2,7 +2,7 @@
 
 Aplicación de **facturación electrónica para Ecuador** con arquitectura **multiempresa**: un
 **superadministrador** crea empresas/licencias, cada empresa opera con su **RUC** y su información
-completamente **aislada** (base de datos propia), y cada empresa tiene su **administrador** y roles.
+completamente **aislada** (schema propio en PostgreSQL), y cada empresa tiene su **administrador** y roles.
 
 La emisión es **desarrollo propio con integración directa al SRI** (clave de acceso, XML según fichas
 técnicas, firma **XAdES-BES**, SOAP de recepción/autorización), verificada contra el SRI real y con un
@@ -11,14 +11,14 @@ validador XMLDSig externo. Ver [`docs/01-arquitectura-servicio-upconta.md`](docs
 ## Arquitectura multiempresa
 
 ```
-data/
-  platform.db            ← usuarios globales, empresas/licencias y tokens de API
-  tenants/
-    <empresa-id>.db      ← TODA la información de una empresa (catálogo, inventario,
-                            comprobantes, certificado, configuración SRI, bitácora SRI)
+PostgreSQL 18
+  schema platform            ← usuarios globales, empresas/licencias y tokens de API
+  schema tenant_<empresa-id> ← TODA la información de una empresa (catálogo, inventario,
+                                comprobantes, certificado, configuración SRI, bitácora SRI)
 ```
 
-- Cada empresa se aprovisiona con **su propia base SQLite**: el aislamiento es físico, no sólo por filtro.
+- Cada empresa se aprovisiona con **su propio schema PostgreSQL** (`tenant_<id>`): el aislamiento
+  se aplica por `search_path` en cada consulta/transacción y por el contexto de la petición.
 - El **superadministrador** (rol `superadmin`) ve la plataforma: crea licencias, activa/suspende/renueva,
   asigna administradores y puede entrar a configurar cualquier empresa.
 - El **administrador de empresa** (`admin`) sólo ve su empresa.
@@ -120,8 +120,8 @@ verificación de firma y las interacciones con el SRI.
 | `npm run verify:signature` | Valida la firma de los 5 comprobantes con el XMLDSig del JDK |
 | `npm run verify:signature:sha256` | Igual con SHA-256 |
 | `npm run probar:emision` | Emite una factura real y muestra el resultado del SRI |
-| `npm run backup` | Copia de seguridad de `platform.db` y `tenants/` |
-| `npm run reset-db` | Elimina las bases de datos (use luego `npm run seed`) |
+| `npm run backup` | Respaldo de los datos SQLite históricos (solo legado) |
+| `npm run reset-db` | Elimina las bases SQLite históricas (no toca PostgreSQL) |
 
 ## API de la plataforma (superadministrador)
 
@@ -145,17 +145,18 @@ El superadministrador opera sobre una empresa enviando la cabecera `X-Company-Id
 - `npm run autodiagnostico` levanta una instancia aislada y verifica plataforma, licencia, catálogo,
   inventario, factura, notas, guía, retención, usuarios, aislamiento, certificado y firma.
 - `npm run autodiagnostico:sri` incluye conectividad y emisión real contra el SRI (requiere internet).
-- Resultado actual: **31/31** verificaciones del autodiagnóstico y **19/19** pruebas del núcleo.
+- Resultado actual: **29/29** verificaciones del autodiagnóstico (31/31 con SRI real) y **19/19** pruebas del núcleo.
 
 ## Respaldo y despliegue
 
-- **Respaldo:** `npm run backup` copia `data/platform.db*` y `data/tenants/` a
-  `backups/<fecha>/`. Para restaurar, detenga la aplicación y reponga esos archivos.
-- Cada empresa puede respaldarse individualmente copiando `data/tenants/<id>.db`.
-- **VPS propio:** un solo proceso atiende a todas las empresas. Si prefiere instancias
-  independientes por cliente, el mismo código funciona por instalación (una plataforma por VPS).
-- Variables de entorno: `PORT`, `HOST`, `JWT_SECRET`, `DB_PATH` (compatibilidad),
-  `PLATFORM_DB_PATH`, `TENANTS_DIR`, `CERT_DIR`, `SRI_TIMEOUT_MS`.
+- **Respaldo de producción:** volumen PostgreSQL `sistemas-sofi-pgdata` (Dokploy Volume Backup)
+  y volumen de certificados `sistemas-sofi-storage`. Los archivos SQLite anteriores se conservan
+  en `sistemas-sofi-data` como respaldo de rollback.
+- Runbook completo: [`docs/06-migracion-postgresql.md`](docs/06-migracion-postgresql.md).
+- **VPS propio:** un solo proceso atiende a todas las empresas; PostgreSQL se ejecuta como
+  servicio interno de Dokploy, sin exponer el puerto 5432 a Internet.
+- Variables principales: `PORT`, `HOST`, `JWT_SECRET`, `DB_DRIVER`, `DATABASE_URL`,
+  `DB_SCHEMA_PREFIX`, `STORAGE_DIR`, `CERT_DIR`, `SRI_TIMEOUT_MS`.
 
 ## Seguridad recomendada antes de producción
 
@@ -226,12 +227,14 @@ Recuerde abrir el puerto en el firewall y poner HTTPS con un proxy inverso (Ngin
 
 El proyecto está preparado para desplegarse en **Dokploy** con Docker:
 
-- `Dockerfile` en la raíz, sin dependencias npm (Node 24 + `node:sqlite`).
-- Volúmenes persistentes: `/app/data` (plataforma + una base por empresa) y `/app/storage` (certificados).
+- `Dockerfile` en la raíz (Node 24 + PostgreSQL 18 vía `pg`).
+- Volúmenes persistentes: `/app/data` (archivos SQLite históricos de rollback) y `/app/storage` (certificados).
+- PostgreSQL corre como servicio interno de Dokploy con volumen `sistemas-sofi-pgdata`.
 - `SEED_DEMO=false` para producción: solo crea el superadministrador definido por variables.
 - `HOST=0.0.0.0`, `PORT=4000`, healthcheck en `/api/health`.
 
-Guía completa: [`docs/05-despliegue-dokploy.md`](docs/05-despliegue-dokploy.md).
+Guía de despliegue: [`docs/05-despliegue-dokploy.md`](docs/05-despliegue-dokploy.md).
+Runbook de migración: [`docs/06-migracion-postgresql.md`](docs/06-migracion-postgresql.md).
 
 ### Ramas
 
@@ -241,6 +244,8 @@ Guía completa: [`docs/05-despliegue-dokploy.md`](docs/05-despliegue-dokploy.md)
 
 ### Base de datos
 
-La plataforma usa **una base SQLite por empresa** sobre un volumen persistente: aislamiento físico por
-RUC, respaldos simples y cero servidores de base de datos que administrar. La ruta de migración a
-**PostgreSQL** (plantilla de Dokploy) para escalado horizontal está documentada en la guía de despliegue.
+La plataforma usa **PostgreSQL 18** con un **schema por empresa** (`tenant_<id>`) y un schema
+`platform` para licencias/usuarios. La aplicación usa un pool `pg` y fija `search_path` por
+consulta/transacción; el aislamiento no depende de un filtro manual. Ver el runbook de migración
+para respaldo, rollback y operación.
+
